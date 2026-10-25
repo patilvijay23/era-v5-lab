@@ -25,3 +25,16 @@ d89a364142de1d38,full,drop,A5;C4;C5,A5: decomposed 'ऱ' at offset 375; NFC �
 91797bb3b69402ec,full,fix,A5,A5: decomposed 'ऱ' at offset 848; NFC → 'ऱ',848 U+0930 DEVANAGARI LETTER RA + U+093C DEVANAGARI SIGN NUKTA,normalize NFC.
 9cda1160c820c948,full,clean,,,,Read in full; no listed disease found.
 5aa27e1e22c34a72,full,clean,,,,Read in full; no listed disease found.
+24cbb7da9e5d3521,full,fix,A5,A5: decomposed 'ऱ' at offset 700; NFC → 'ऱ',700 U+0930 DEVANAGARI LETTER RA + U+093C DEVANAGARI SIGN NUKTA,normalize NFC.
+62824ba9e8c43e4c,full,clean,,,,Read in full; no listed disease found.
+fb51230fe8f61941,full,clean,,,,Read in full; no listed disease found.
+0ad004d5deb1e7fe,full,drop,C1;C3,"C1: boiler plate of type keep reading with preceding and trailing dots at offset 226; C3: Documment truncated at offset 226",,drop document
+a10858c8ccf36d12,full,fix,A5;A6,"A5: decomposed 'ऱ' at offset 361; NFC → 'ऱ'. A6: Latin script at offset 442 but valid",361 U+0930 DEVANAGARI LETTER RA + U+093C DEVANAGARI SIGN NUKTA,normalize NFC.
+eca53051bfdab52d,full,fix,A5;C2;C4,A5: decomposed 'ऱ' at offset 625 (5x); NFC → 'ऱ'; C2: opening text repeats at offsets 0 and 153;C4: new document starts at offset 1975,625 U+0930 DEVANAGARI LETTER RA + U+093C DEVANAGARI SIGN NUKTA (5x),normalize NFC; deduplicate repeated text; cut out into two documents.
+5cd1cc2146075a9f,full,fix,B4;C1;C2,"B4: literal ""\\n"" escape at offset 81 (3x); C1: publisher/related-content boilerplate begins at offset 71; C2: title repeats at offsets 0 and 99",,convert literal escape to real newline; strip boilerplate; remove text until offset 98.
+21c9acb35b908585,full,fix,C1;D3,"C1: publisher/related-content boilerplate begins at offset 3095; D3: English/Marathi code-mixing at offset 19, e.g. 'Assembly'",,strip boilerplate; retain natural code-mixing; do not monolingually filter.
+815eb112e94faf6e,full,fix,A5;A6;C4,"A5: decomposed 'ऱ' at offset 1643; NFC → 'ऱ'; A6: malformed mixed-script token ""23क्"" at offset 34; C4: unrelated second text begins at offset 115",1643 U+0930 DEVANAGARI LETTER RA + U+093C DEVANAGARI SIGN NUKTA | 34 U+0032 DIGIT TWO + U+0033 DIGIT THREE + U+0915 DEVANAGARI LETTER KA + U+094D DEVANAGARI SIGN VIRAMA,normalize NFC; repair mixed-script/OCR artifact; split/remove joined text.
+450e39d7980d1090,full,fix,A5,A5: decomposed 'ऱ' at offset 20 (2x); NFC → 'ऱ',20 U+0930 DEVANAGARI LETTER RA + U+093C DEVANAGARI SIGN NUKTA (2x),normalize NFC.
+0df3bb99ef03ef5f,full,fix,A5,A5: decomposed 'ऱ' at offset 16 (8x); NFC → 'ऱ',16 U+0930 DEVANAGARI LETTER RA + U+093C DEVANAGARI SIGN NUKTA (8x),normalize NFC.
+a0aeab58462420bc,full,drop,A5;C1;C2;D3,"A5: decomposed 'ऱ' at offset 177; NFC → 'ऱ'; C1: publisher/related-content boilerplate begins at offset 309; C2: opening text repeats at offsets 0 and 63; D3: English/Marathi code-mixing at offset 382, e.g. 'YouTube'",177 U+0930 DEVANAGARI LETTER RA + U+093C DEVANAGARI SIGN NUKTA,normalize NFC; very little of value will remain after cleaning.
+d7372ee74272ac60,full,fix,A5,A5: decomposed 'ऱ' at offset 140 (2x); NFC → 'ऱ',140 U+0930 DEVANAGARI LETTER RA + U+093C DEVANAGARI SIGN NUKTA (2x),normalize NFC.
