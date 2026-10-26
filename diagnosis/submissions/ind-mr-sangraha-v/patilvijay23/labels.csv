@@ -99,3 +99,53 @@ f88663c4af1d5144,full,fix,A5,A5: decomposed 'ऱ' at offset 12 (2x); NFC → 
 c2df7affc6dd05cb,full,clean,,,,Read in full; no listed disease found.
 33766cddf781af3c,full,clean,,,,Read in full; no listed disease found.
 4dea645e7a66adbb,full,fix,A5;C5,A5: decomposed 'ऱ' at offset 1305 (2x); NFC → 'ऱ'; C5: headline/keyword list begins at offset 2520,1305 U+0930 DEVANAGARI LETTER RA + U+093C DEVANAGARI SIGN NUKTA (2x),normalize NFC; remove keyword/headline list.
+001bc250879bd0f7,full,fix,F1,F1: name and private residential address at offset 2503,,redact private data.
+14b9ee03ca1ae8ef,full,fix,A5,A5: decomposed 'ऱ' at offset 26 (5x); NFC → 'ऱ',26 U+0930 DEVANAGARI LETTER RA + U+093C DEVANAGARI SIGN NUKTA (5x),normalize NFC.
+6f6c8c55169b5ce0,full,fix,D3,"D3: English/Marathi code-mixing at offset 70, e.g. 'Saamana'",,retain natural code-mixing; do not monolingually filter.
+71ef1d9a6e3a3fce,full,fix,C2,C2: opening text repeats at offsets 0 and 287,,deduplicate repeated text.
+71bf6684fd65db89,full,fix,A5,A5: decomposed 'ऱ' at offset 376; NFC → 'ऱ',376 U+0930 DEVANAGARI LETTER RA + U+093C DEVANAGARI SIGN NUKTA,normalize NFC.
+e16f055a1ea07db7,full,fix,A5;C1;D3,"A5: decomposed 'ऱ' at offset 581; NFC → 'ऱ'; C1: publisher/related-content boilerplate begins at offset 830; D3: English/Marathi code-mixing at offset 15, e.g. 'Anuskha Sharma'",581 U+0930 DEVANAGARI LETTER RA + U+093C DEVANAGARI SIGN NUKTA,normalize NFC; strip boilerplate; retain natural code-mixing; do not monolingually filter.
+f4e02612a5a51794,full,fix,A5,A5: decomposed 'ऱ' at offset 161; NFC → 'ऱ',161 U+0930 DEVANAGARI LETTER RA + U+093C DEVANAGARI SIGN NUKTA,normalize NFC.
+69b0fff1b9b65a0c,full,fix,A5,A5: decomposed 'ऱ' at offset 1143 (2x); NFC → 'ऱ',1143 U+0930 DEVANAGARI LETTER RA + U+093C DEVANAGARI SIGN NUKTA (2x),normalize NFC.
+8acc240b173977d0,full,fix,A5;C3;D3,"A5: decomposed 'ऱ' at offset 1112 (6x); NFC → 'ऱ'; C3: document begins mid-sentence at offset 0 and contains page-continuation artifacts at multiple places; D3: English/Marathi code-mixing at offset 6906, e.g. 'Native Naratives by Metcaife'",1112 U+0930 DEVANAGARI LETTER RA + U+093C DEVANAGARI SIGN NUKTA (6x),normalize NFC; trim incomplete fragment; retain natural code-mixing; do not monolingually filter.
+e531b723ffb70b67,full,fix,A5;C2,A5: decomposed 'ऱ' at offset 302 (3x); NFC → 'ऱ'; C2: opening text repeats at offsets 0 and 88,302 U+0930 DEVANAGARI LETTER RA + U+093C DEVANAGARI SIGN NUKTA (3x),normalize NFC; deduplicate repeated text.
+5b1f4c77baded6e4,full,fix,C1;D3,"C1: publisher/related-content boilerplate begins at offset 1192; D3: English/Marathi code-mixing at offset 0, e.g. 'Seditious Speech'",,strip boilerplate; retain natural code-mixing; do not monolingually filter.
+da7f7fb116352823,full,fix,A5,A5: decomposed 'ऱ' at offset 24; NFC → 'ऱ',24 U+0930 DEVANAGARI LETTER RA + U+093C DEVANAGARI SIGN NUKTA,normalize NFC.
+9995d8742afbbd7b,full,fix,D3,"D3: English/Marathi code-mixing at offset 60, e.g. 'ex mla daughter in law'",,retain natural code-mixing; do not monolingually filter.
+3d66fc6c5c856726,full,fix,A5;C1,"A5: decomposed 'ऱ' at offset 34 (3x); NFC → 'ऱ'; C1: publisher/related-content boilerplate begins at offset 1028",34 U+0930 DEVANAGARI LETTER RA + U+093C DEVANAGARI SIGN NUKTA (3x),normalize NFC; strip boilerplate
+f1b42f0e05bb586f,full,fix,A5;C1;D3,"A5: decomposed 'ऱ' at offset 440; NFC → 'ऱ'; C1: publisher/related-content boilerplate begins at offset 1122; D3: English/Marathi code-mixing at offset 311, e.g. 'Cuncoliem'",440 U+0930 DEVANAGARI LETTER RA + U+093C DEVANAGARI SIGN NUKTA,normalize NFC; strip boilerplate; retain natural code-mixing; do not monolingually filter.
+d6d73cf04f8797df,full,clean,,,,Read in full; no listed disease found.
+450b1b857a78cb7d,full,fix,B4;C2,"B4: literal ""\\n"" escape at offset 165 (5x); C2: opening text repeats at offsets 0 and 83",,convert literal escape to real newline; deduplicate repeated text.
+670a70d40c487ff4,full,fix,A5;D3,"A5: decomposed 'ऱ' at offset 99 (4x); NFC → 'ऱ'; D3: English/Marathi code-mixing at offset 395, e.g. 'Colin De Grandhomme'",99 U+0930 DEVANAGARI LETTER RA + U+093C DEVANAGARI SIGN NUKTA (4x),normalize NFC; retain natural code-mixing; do not monolingually filter.
+0d1a2b0355261806,full,fix,C1;D3,"C1: publisher/related-content boilerplate begins at offset 1187; D3: English/Marathi code-mixing at offset 39, e.g. 'Jio'",,strip boilerplate; retain natural code-mixing; do not monolingually filter.
+bbf97308ccc8ecdf,full,clean,,,,Read in full; no listed disease found.
+dec2f66b37294bf9,full,fix,C2,C2: opening text repeats at offsets 0 and 75,,deduplicate repeated text.
+4c7e732e44b1e26f,full,fix,A5,A5: decomposed 'ऱ' at offset 970 (2x); NFC → 'ऱ',970 U+0930 DEVANAGARI LETTER RA + U+093C DEVANAGARI SIGN NUKTA (2x),normalize NFC.
+e3edbb6eeb7a5d3d,full,fix,A5,A5: decomposed 'ऱ' at offset 337; NFC → 'ऱ',337 U+0930 DEVANAGARI LETTER RA + U+093C DEVANAGARI SIGN NUKTA,normalize NFC.
+6846582e6d2a3fb6,full,fix,D3,"D3: English/Marathi code-mixing at offset 8, e.g. 'Live24'",,retain natural code-mixing; do not monolingually filter.
+32901f564cb84d42,full,clean,,,,Read in full; no listed disease found.
+b47326d402cdaebc,full,clean,,,,Read in full; no listed disease found.
+0d07959b663592a8,full,fix,A5,A5: decomposed 'ऱ' at offset 43 (2x); NFC → 'ऱ',43 U+0930 DEVANAGARI LETTER RA + U+093C DEVANAGARI SIGN NUKTA (2x),normalize NFC.
+50bf742434fe8393,full,fix,F1,F1: name and private residential address at offset 216,,redact private data.
+0a7e229db7c13bd2,full,fix,A5,A5: decomposed 'ऱ' at offset 345; NFC → 'ऱ',345 U+0930 DEVANAGARI LETTER RA + U+093C DEVANAGARI SIGN NUKTA,normalize NFC.
+68a6e9b027facc18,full,fix,A5,A5: decomposed 'ऱ' at offset 1845 (4x); NFC → 'ऱ',1845 U+0930 DEVANAGARI LETTER RA + U+093C DEVANAGARI SIGN NUKTA (4x),normalize NFC.
+3733551fdfa28907,full,fix,D3,"D3: English/Marathi code-mixing at offset 55, e.g. 'Ashok Chavan'",,retain natural code-mixing; do not monolingually filter.
+b6247794d43dd022,full,fix,D3,"D3: English/Marathi code-mixing at offset 83, e.g. 'Corona'",,retain natural code-mixing; do not monolingually filter.
+0bd4e33f6866133a,full,clean,,,,Read in full; no listed disease found.
+1cd33f52abb49019,full,fix,A5;C2,A5: decomposed 'ऱ' at offset 163 (4x); NFC → 'ऱ'; C2: opening text repeats at offsets 0 and 211,163 U+0930 DEVANAGARI LETTER RA + U+093C DEVANAGARI SIGN NUKTA (4x),normalize NFC; deduplicate repeated text.
+3dd2a803b70d3754,full,fix,D3,"D3: English/Marathi code-mixing at offset 367, e.g. 'herbs'",,retain natural code-mixing; do not monolingually filter.
+dde283c595b7ad19,full,clean,,,,Read in full; no listed disease found.
+ade810056c03e57f,full,fix,A5;C2,A5: decomposed 'ऱ' at offset 2083; NFC → 'ऱ'; C2: opening text repeats at offsets 0 and 170,2083 U+0930 DEVANAGARI LETTER RA + U+093C DEVANAGARI SIGN NUKTA,normalize NFC; deduplicate repeated text.
+0be32b0ab8375d30,full,fix,D3,"D3: English/Marathi code-mixing at offset 8, e.g. 'Live24'",,retain natural code-mixing; do not monolingually filter.
+072bd521189df9d7,full,clean,,,,Read in full; no listed disease found.
+ebd9df55e9518211,full,fix,A6;C2,A6: mixed Devanagari/Latin numerals begin at offset 1479 (3 occurrences); C2: opening text repeats at offsets 0 and 142,1480 U+0030 DIGIT ZERO (3x),repair mixed-script/OCR artifact; deduplicate repeated text.
+f71f009683aff212,full,fix,A5;D3,"A5: decomposed 'ऱ' at offset 25 (3x); NFC → 'ऱ'; D3: English/Marathi code-mixing at offset 66, e.g. 'Russian Model Gretta Vedler'",25 U+0930 DEVANAGARI LETTER RA + U+093C DEVANAGARI SIGN NUKTA (3x),normalize NFC; retain natural code-mixing; do not monolingually filter.
+862eab5a73b170a1,full,fix,D3,"D3: English/Marathi code-mixing at offset 30, e.g. 'Supreme Court'",,retain natural code-mixing; do not monolingually filter.
+ed6affb52c006a8a,full,fix,A5,A5: decomposed 'ऱ' at offset 658 (2x); NFC → 'ऱ',658 U+0930 DEVANAGARI LETTER RA + U+093C DEVANAGARI SIGN NUKTA (2x),normalize NFC.
+727a8a3d9a6f4fd4,full,fix,A5;C2;F1,A5: decomposed 'ऱ' at offset 1520; NFC → 'ऱ'; C2: opening text repeats at offsets 0 and 372; F1: phone number at offset 2095,1520 U+0930 DEVANAGARI LETTER RA + U+093C DEVANAGARI SIGN NUKTA,normalize NFC; deduplicate repeated text; redact private data.
+24fde343bed1a13c,full,clean,,,,Read in full; no listed disease found.
+44ddabd5d3d8c1bf,full,fix,C3;D3,"C3: document ends mid-sentence/incomplete section near offset 1814; D3: English/Marathi code-mixing at offset 1459, e.g. 'R'",,trim incomplete fragment; retain natural code-mixing; do not monolingually filter.
+8d3e4ed78fbd4bfc,full,fix,A5,A5: decomposed 'ऱ' at offset 2792 (3x); NFC → 'ऱ',2792 U+0930 DEVANAGARI LETTER RA + U+093C DEVANAGARI SIGN NUKTA (3x),normalize NFC.
+3f778dbae01f36f4,full,fix,C1,C1: publisher/related-content boilerplate begins at offset 1499,,strip boilerplate.
+531aa9d6f5651bab,full,clean,,,,Read in full; no listed disease found.
+47219cd9ac8bdc6c,full,fix,C2,C2: opening text repeats at offsets 0 and 202,,deduplicate repeated text.
