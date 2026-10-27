@@ -1,0 +1,102 @@
+doc_id,read,verdict,diseases,evidence,hex,note
+8c1aed2f8a439b91,full,fix,C1;C2,"C1: 'MIT Introduction to Deep Learning
+introtodeeplearning.com  @MITDeepLearning' at offset 3029 (7x); C2: repeated content block offset 7063 and 7281",,Repeated training-slide title/footer; retain unique lecture content; Finding supported by inspected evidence
+6d2428a3ad8e41d6,full,fix,C1; F1,C1: newsletter boilerplate from offset 0 to 721 and from offset 17445 to EOD; F1: cell number at offset 19905 19125 19890,,Faith based newsletter. Contains business phone number that is public but still remove
+2e1a062fc21d315b,full,clean,,,,Airline PR release. Letter format so contains letter start and end but that is good context on letter and pr structure
+50cc681aabd3d82b,partial,,,,,Full-text machine scan complete; requires full human reading before final submission
+507d7cf0978d22e4,partial,,,,,Full-text machine scan complete; requires full human reading before final submission
+3db737dca1122c53,full,fix,C2,'Test Overview and Tips for Maximizing Your Score' at offset 1137,,Entire STEP 1 outline repeats under STEP 8
+33d1f7b3eec4d2c0,full,clean,,,,Valid standalone article; a reference to associated tour dates is original editorial content
+b0d032fadb33dbf4,partial,,,,,Full-text machine scan complete; requires full human reading before final submission
+b7c735b64d1af67a,partial,,,,,Full-text machine scan complete; requires full human reading before final submission
+55f375144ed541bf,partial,fix,C3,"'toll-like receptor-, tumor' at offset 66440",,Reference list cuts off mid-reference at end of extract; Full-text machine scan complete; requires full human reading before final submission
+73fbd40e1111121e,partial,fix,C1,'DRAWING NOS. AR 14-2019' at offset 108396,,Architectural title block repeats many times throughout extract; Full-text machine scan complete; requires full human reading before final submission
+8b5b54304788333e,partial,,,,,Full-text machine scan complete; requires full human reading before final submission
+854af92dbde41a63,partial,fix,F1,residential street address at offset 12231,,Individual donor residential address is in contribution table; value redacted; Full-text machine scan complete; requires full human reading before final submission
+776e2d329eaeeb77,partial,,,,,Full-text machine scan complete; requires full human reading before final submission
+e44cb4676171abba,partial,,,,,Full-text machine scan complete; requires full human reading before final submission
+7ea84af3398cb3ed,partial,fix,B2,'<br>' at offset 445945,,HTML line-break tags are embedded in extracted prose; Full-text machine scan complete; requires full human reading before final submission
+8acbf1b8c927795d,partial,,,,,Full-text machine scan complete; requires full human reading before final submission
+4f3067e9d3a6b2b8,partial,,,,,Full-text machine scan complete; requires full human reading before final submission
+cb2c6fb11ebf329e,full,clean,,,,
+494eabee8799f93a,partial,,,,,Full-text machine scan complete; requires full human reading before final submission
+50f74766355f26d3,partial,fix,B2,'<sup>' at offset 9685,,Superscript HTML tags remain inside research prose; Full-text machine scan complete; requires full human reading before final submission
+c298d58f6344ddde,partial,fix,B2,'<sup>' at offset 43973,,Superscript HTML tags remain inside references; Full-text machine scan complete; requires full human reading before final submission
+c6acd9e6d213d6f4,full,clean,,,,
+4656c1ed1d4393c4,partial,fix,B2,'<sub>' at offset 5912,,HTML subscript tags remain inside scientific table; Full-text machine scan complete; requires full human reading before final submission
+a243639493a0e633,partial,,,,,Full-text machine scan complete; requires full human reading before final submission
+eee25e81417bc1b7,partial,drop,D1;C4,'Suomenlahden muuttoreitillä sijaitsevien lintuvesien hoito' at offset 0 | 'The Finnish Army has been using tracked vehicles' at offset 1966,,Finnish PDF heading despite English pack; generated English captions dominate extraction; Unrelated image-description prose interrupts Finnish wetland slides; Full-text machine scan complete; requires full human reading before final submission
+83449c2d7a1d9e03,partial,,,,,Full-text machine scan complete; requires full human reading before final submission
+cc26121e33c42f1b,full,clean,,,,
+2d2c43ce5f335d3d,full,clean,,,,
+51a4fb599da754db,partial,fix,C3;C4,'Das vorliegende Buch soll' at offset 21405 | 'Martin Kloster Jensen' at offset 21275,,Extract terminates inside a German review sentence; A new book review begins after the previous review under same document ID; Full-text machine scan complete; requires full human reading before final submission
+053c80cc1a9b16bc,partial,,,,,Full-text machine scan complete; requires full human reading before final submission
+6acc7c94105bdebd,partial,fix,C4;C3,'Subungual Blue Nevus' at offset 7254 | 'Figure 1 Semicircular bluish-black macule' at offset 9576,,Second independent dermatology article begins within prior article extract; Second article stops inside its figure caption/discussion; Full-text machine scan complete; requires full human reading before final submission
+42251c5ad07d17d4,partial,,,,,Full-text machine scan complete; requires full human reading before final submission
+dbc199ea29145c03,full,clean,,,,
+5899e41d188800b4,partial,,,,,Full-text machine scan complete; requires full human reading before final submission
+b44b092b0e829a12,full,fix,F1,personal mobile number at offset 86,,Personally identifying contact details for private individual; values not reproduced
+fb2ef557617d7ad1,partial,,,,,Full-text machine scan complete; requires full human reading before final submission
+54cb8c8803e08af4,partial,fix,C1,'Canyon Creek Alluvial Fan Risk Assessment' at offset 0,,Report running title/header repeated across pages; Full-text machine scan complete; requires full human reading before final submission
+e297884606b7596d,full,clean,,,,
+5e5ff4de55e7e018,partial,,,,,Full-text machine scan complete; requires full human reading before final submission
+6da51c7f3a3b6ff4,partial,fix,C1,'Subgroups with less' at offset 18962,,Repeated statistical footnote across dozens of tables; Full-text machine scan complete; requires full human reading before final submission
+d20d4f04e5704ba7,partial,,,,,Full-text machine scan complete; requires full human reading before final submission
+53ff455424cff71f,partial,,,,,Full-text machine scan complete; requires full human reading before final submission
+d1a387dea20a1242,partial,,,,,Full-text machine scan complete; requires full human reading before final submission
+26a07693d706218f,full,fix,C3,'Sale of fixed assets' at offset 4713,,Text ends after question 9 despite many exam papers listed in contents
+ae07689169b90384,partial,,,,,Full-text machine scan complete; requires full human reading before final submission
+06b18306786f56a5,full,clean,,,,
+3b215cb29425e7d6,partial,,,,,Full-text machine scan complete; requires full human reading before final submission
+ecf88dd0f06c4b35,partial,fix,C1,'HEARTLAND CAREER CENTER' at offset 8571,,Repeated school document header across pages; Full-text machine scan complete; requires full human reading before final submission
+7ee29203d895d80f,partial,,,,,Full-text machine scan complete; requires full human reading before final submission
+9c3996ebe2857e30,partial,,,,,Full-text machine scan complete; requires full human reading before final submission
+6339f30546c81c2e,partial,,,,,Full-text machine scan complete; requires full human reading before final submission
+0e4cfb3b81d67dc5,full,clean,,,,Repeated telemetry headings distinguish rows; not extraneous boilerplate
+07b068caa59048f9,full,clean,,,,Future event notice is integral to the concert programme PDF
+a6dca2c281646a03,partial,,,,,Full-text machine scan complete; requires full human reading before final submission
+2b0f374583268f3c,partial,,,,,Full-text machine scan complete; requires full human reading before final submission
+0798582b775b470f,partial,,,,,Full-text machine scan complete; requires full human reading before final submission
+08b7ae2fa0363275,partial,,,,,Full-text machine scan complete; requires full human reading before final submission
+3c2aebcdc61e5694,partial,,,,,Full-text machine scan complete; requires full human reading before final submission
+35eb8b91a98d3a41,partial,,,,,Full-text machine scan complete; requires full human reading before final submission
+c9df663ed9fb5bea,partial,,,,,Full-text machine scan complete; requires full human reading before final submission
+6e54aa31a9a0611e,partial,,,,,Full-text machine scan complete; requires full human reading before final submission
+3cdf7221196813da,partial,,,,,Full-text machine scan complete; requires full human reading before final submission
+1cc10779aced9a7f,partial,fix,C1;B2,'For identification purposes only' at offset 84 | '<sup>' at offset 96220,,Repeated external-auditor watermark throughout financial report; Residual HTML superscript tags in extracted report; Full-text machine scan complete; requires full human reading before final submission
+44f66c3734e3d5ca,partial,fix,D1;C4,'Muzeja resursu izmantošanas iespējas amatniekiem' at offset 0 | 'A picture frame is a decorative border' at offset 1731,,Latvian presentation is labeled English; Unrelated English image captions inserted into Latvian source; Full-text machine scan complete; requires full human reading before final submission
+192aba9b7f84e8ca,partial,,,,,Full-text machine scan complete; requires full human reading before final submission
+93adf8697409e36c,partial,,,,,Full-text machine scan complete; requires full human reading before final submission
+5bf37f2a0813d0c1,partial,,,,,Full-text machine scan complete; requires full human reading before final submission
+7baed34b2308e9c5,full,clean,,,,
+bd1a8bb7d789e910,partial,,,,,Full-text machine scan complete; requires full human reading before final submission
+7851ac162534fb8a,partial,,,,,Full-text machine scan complete; requires full human reading before final submission
+373b76e02c705704,partial,,,,,Full-text machine scan complete; requires full human reading before final submission
+5938b33ca03c380a,partial,,,,,Full-text machine scan complete; requires full human reading before final submission
+920855df51f37db8,partial,,,,,Full-text machine scan complete; requires full human reading before final submission
+cdc5973ec2161f44,partial,,,,,Full-text machine scan complete; requires full human reading before final submission
+9110713e77637024,partial,,,,,Full-text machine scan complete; requires full human reading before final submission
+19e4332d89d32061,full,clean,,,,Multiple headed newspaper notices in a single edition are legitimate PDF content
+0d8b7d532a14c69a,partial,,,,,Full-text machine scan complete; requires full human reading before final submission
+b09404dd12a456be,partial,,,,,Full-text machine scan complete; requires full human reading before final submission
+795fa56071e88c0c,partial,,,,,Full-text machine scan complete; requires full human reading before final submission
+8c2c1359b53f9442,partial,,,,,Full-text machine scan complete; requires full human reading before final submission
+bfbe6f0f5d61c19e,partial,,,,,Full-text machine scan complete; requires full human reading before final submission
+9486f7dfe7c330e3,full,clean,,,,
+fb58071a2b5e5cdb,partial,,,,,Full-text machine scan complete; requires full human reading before final submission
+41f54eb5c63d60cc,partial,,,,,Full-text machine scan complete; requires full human reading before final submission
+75611d2315b9312e,partial,,,,,Full-text machine scan complete; requires full human reading before final submission
+0f04545eee94d987,partial,,,,,Full-text machine scan complete; requires full human reading before final submission
+e554caf656494ae2,partial,,,,,Full-text machine scan complete; requires full human reading before final submission
+a3472c2ba98c2551,partial,,,,,Full-text machine scan complete; requires full human reading before final submission
+7b3bae075770d199,full,clean,,,,
+5f7545c1f4a386b1,partial,fix,C3,'Treaty on the Prohibition of the Emplacement' at offset 567555,,Very long extract ends in treaty table; possible cut-off to verify against original PDF; Full-text machine scan complete; requires full human reading before final submission
+a6e70d0fef431172,partial,,,,,Full-text machine scan complete; requires full human reading before final submission
+32e5e0b143c36d65,partial,drop,F1,residential street address at offset 29092,,Personally identifying contact details for private individual; values not reproduced; Full-text machine scan complete; requires full human reading before final submission
+c6d6f16f70df8b71,partial,,,,,Full-text machine scan complete; requires full human reading before final submission
+510796b2fbb42bb7,partial,,,,,Full-text machine scan complete; requires full human reading before final submission
+d0a0a41263e845f5,partial,,,,,Full-text machine scan complete; requires full human reading before final submission
+4b958ac1f45443b5,partial,,,,,Full-text machine scan complete; requires full human reading before final submission
+9397bad7ea9147ce,full,clean,,,,
+650e04c676aed57f,partial,,,,,Full-text machine scan complete; requires full human reading before final submission
+ee1386df10972650,partial,,,,,Full-text machine scan complete; requires full human reading before final submission
