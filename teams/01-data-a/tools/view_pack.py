@@ -9,7 +9,6 @@ Usage:
     python view_pack.py <pack.parquet> --start 52
     python view_pack.py <pack.parquet> --audit
     python view_pack.py <pack.parquet> --unicode 2400 2460
-
 Navigation:
     Enter       next document
     b           previous document
@@ -25,12 +24,10 @@ Notes:
 """
 
 from __future__ import annotations
-
 import argparse
 import re
 import unicodedata
 from collections import Counter
-
 
 # C0/C1 control names that unicodedata.name() does not reliably expose.
 CONTROL_NAMES = {
@@ -94,11 +91,12 @@ SPECIAL_NAMES = {
 # Dependent Devanagari marks that should normally be attached to a Devanagari base
 # or another valid mark. We report suspicious placements as G1 *candidates* only.
 DEVANAGARI_DEPENDENT_MARKS = (
-    set(range(0x093A, 0x094E))
+    set(range(0x0900, 0x0904))  # candrabindu/anusvara/visarga and U+0900
+    | set(range(0x093A, 0x094E))
     | set(range(0x094E, 0x0950))
     | set(range(0x0951, 0x0958))
     | set(range(0x0962, 0x0964))
-)
+) - {0x093D}  # DEVANAGARI SIGN AVAGRAHA is a letter, not a dependent mark.
 
 
 def unicode_name(ch: str) -> str:
@@ -156,7 +154,7 @@ def hidden_characters(text: str) -> list[tuple[int, str]]:
 
 
 def _nfc_cluster(text: str, mark_index: int) -> tuple[int, int, str]:
-    """Return a starter+combining-marks cluster around a combining character."""
+    """Return a starter+combining-marks cluster around a candidate character."""
     start = mark_index
     while start > 0 and unicodedata.combining(text[start]) != 0:
         start -= 1
@@ -167,11 +165,16 @@ def _nfc_cluster(text: str, mark_index: int) -> tuple[int, int, str]:
 
 
 def nfc_candidates(text: str) -> list[tuple[int, str, str]]:
-    """Return source offsets/clusters whose canonical form changes under NFC."""
+    """Return source offsets/clusters whose canonical form changes under NFC.
+
+    Also consider standalone code points that NFC decomposes (notably the
+    Devanagari precomposed nukta letters U+0958..U+095F, all combining class 0).
+    """
     seen = set()
     out = []
     for i, ch in enumerate(text):
-        if unicodedata.combining(ch) == 0:
+        if (unicodedata.combining(ch) == 0
+                and unicodedata.normalize("NFC", ch) == ch):
             continue
         start, end, cluster = _nfc_cluster(text, i)
         if (start, end) in seen:
@@ -189,7 +192,6 @@ def is_devanagari(ch: str) -> bool:
 
 def g1_candidates(text: str) -> list[tuple[int, str, str | None]]:
     """Find suspicious Devanagari dependent marks cut from a Devanagari context.
-
     This is intentionally a candidate detector, not an automatic diagnosis. A mark is
     suspicious when its immediate predecessor is whitespace or outside Devanagari
     (except ZWJ/ZWNJ). This catches e.g. `क ि`, `कs्`, and mojibake before a matra.
@@ -222,7 +224,6 @@ def mixed_digit_candidates(text: str) -> list[tuple[int, str]]:
 def audit_report(text: str) -> str:
     """Compact whole-document diagnostic report with no silent 2,000-char cutoff."""
     sections = []
-
     hidden = hidden_characters(text)
     if hidden:
         counts = Counter(ord(ch) for _, ch in hidden)
@@ -236,7 +237,6 @@ def audit_report(text: str) -> str:
                 f"  {first_offset[cp]} U+{cp:04X} {unicode_name(chr(cp))}{suffix}"
             )
         sections.append("\n".join(rows))
-
     nfc = nfc_candidates(text)
     if nfc:
         rows = ["A5/NFC candidates:"]
@@ -245,7 +245,6 @@ def audit_report(text: str) -> str:
             dst_desc = " + ".join(f"U+{ord(c):04X} {unicode_name(c)}" for c in dst)
             rows.append(f"  {offset} {src_desc}  ->  {dst_desc}")
         sections.append("\n".join(rows))
-
     g1 = g1_candidates(text)
     if g1:
         rows = ["G1 candidates (verify in context):"]
@@ -258,7 +257,6 @@ def audit_report(text: str) -> str:
                 f"  {offset} {prev_desc} + U+{ord(mark):04X} {unicode_name(mark)}"
             )
         sections.append("\n".join(rows))
-
     mixed = mixed_digit_candidates(text)
     if mixed:
         rows = ["Mixed Devanagari/ASCII digit candidates:"]
@@ -330,17 +328,11 @@ def parse_args(argv=None):
     group.add_argument("--start", type=int, default=None, help="0-based row index (legacy)")
     group.add_argument("--row", type=int, default=None, help="1-based row number")
     ap.add_argument(
-        "--hex",
-        "--audit",
-        dest="audit",
-        action="store_true",
+        "--hex", "--audit", dest="audit", action="store_true",
         help="show whole-document audit diagnostics (legacy --hex alias retained)",
     )
     ap.add_argument(
-        "--unicode",
-        nargs=2,
-        type=int,
-        metavar=("START", "END"),
+        "--unicode", nargs=2, type=int, metavar=("START", "END"),
         help="print every code point in this zero-based character range for the first shown document",
     )
     return ap.parse_args(argv)
@@ -360,7 +352,6 @@ def main(argv=None):
         i = 0 if a.start is None else a.start
         if not 0 <= i < len(rows):
             raise SystemExit(f"--start must be between 0 and {len(rows) - 1}")
-
     audit = a.audit
     first = True
     while 0 <= i < len(rows):
@@ -372,11 +363,13 @@ def main(argv=None):
             print(unicode_range(d["text"], *a.unicode))
         first = False
 
-        raw = input(
-            "\n[Enter]=next  b=back  h=audit  u START END=unicode  q=quit > "
-        ).strip()
+        try:
+            raw = input(
+                "\n[Enter]=next  b=back  h=audit  u START END=unicode  q=quit > "
+            ).strip()
+        except EOFError:
+            break  # Piped stdin may terminate before an interactive quit command.
         low = raw.lower()
-
         if low == "q":
             break
         if low == "b":
@@ -401,7 +394,6 @@ def main(argv=None):
         if raw == "":
             i += 1
             continue
-
         print("Unknown command. Use Enter, b, h, u START END, or q.")
 
 
