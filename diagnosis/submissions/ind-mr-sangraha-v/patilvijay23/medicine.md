@@ -2,7 +2,43 @@
 
 **Source:** `labels.csv` (final reviewed Marathi pack, rows 1–500), **500 distinct documents; all 500 marked `full`**. Verdicts: **99 `clean`, 362 `fix`, 39 `drop`**. This supersedes the earlier medicine sheet based on 252 documents. Disease counts are *distinct document counts*, not the number of occurrences; documents can have multiple diseases. A medicine section is included for every disease present in **more than five** reviewed documents.
 
-**Status:** **LABEL REVIEW COMPLETE — candidate medicine rules; gold-set harm testing not supplied.** All document diagnoses in the source label file have been reviewed. A `fix` verdict identifies a cleaning requirement; it does not mean that the cleaning transformation has already been applied. Manual *cleaning operations* described below are not outstanding label-review tasks. No measured gold-set PASS, harm percentage, or approved combined pipeline is claimed.
+**Status:** **LABEL REVIEW COMPLETE — GOLD-SET HARM TEST PASS (7 executable rules and combined run).** All 500 source-document diagnoses have been reviewed. The supplied `harm_test.py` run evaluated 88 Marathi gold documents, reporting 0 changed and 0 dropped for every executable medicine and for `ALL IN ORDER` (**0.00%**, **PASS**). The four context-dependent, non-executable medicines (C3, D4, F1 and C4) were not tested. A `fix` verdict identifies a cleaning requirement; it does not imply that a correction has already been applied. **Gold-set safety PASS does not establish that the candidate rules successfully repair labelled disease-positive documents.**
+
+## Gold-set harm-test run — reported results
+
+The following command and results are transcribed from the supplied `harm_test.py` output; this medicine update does **not** represent a new execution of the test.
+
+**Command executed** (from the repository working directory):
+
+```bash
+python -I teams/01-data-a/tools/harm_test.py --pack ./../erav5-lab-other-files/packs/ind-mr-sangraha-v.parquet --gold teams/01-data-a/gold/ind-mr-sangraha-v_gold.csv --rules diagnosis/submissions/ind-mr-sangraha-v/patilvijay23/medicine.md --rule all
+```
+
+**Run inputs and provenance:**
+
+- **Pack:** `ind-mr-sangraha-v.parquet`
+- **Gold:** `ind-mr-sangraha-v_gold.csv` (**88 documents**)
+- **Rules file:** `medicine.md` (`diagnosis/submissions/ind-mr-sangraha-v/patilvijay23/medicine.md`)
+- **Executable rules loaded:** **7** (A5, D3, C1, C2, A6, B4, C5)
+- **Reported `code sha256`:** `1644a597d23c9360a18f2a17027205de365c1081b9d0db837e066225ea757c7a`
+- **Reported harm limit:** **1 document changed or dropped**, calculated by the harness as `max(1, 1% of 88)`.
+
+| Rule | Changed | Dropped | Percent | Result |
+| --- | ---: | ---: | ---: | --- |
+| A5 | 0 | 0 | 0.00% | **PASS** |
+| D3 | 0 | 0 | 0.00% | **PASS** |
+| C1 | 0 | 0 | 0.00% | **PASS** |
+| C2 | 0 | 0 | 0.00% | **PASS** |
+| A6 | 0 | 0 | 0.00% | **PASS** |
+| B4 | 0 | 0 | 0.00% | **PASS** |
+| C5 | 0 | 0 | 0.00% | **PASS** |
+| **ALL IN ORDER** | **0** | **0** | **0.00%** | **PASS** |
+
+**Reported final result:** `result: PASS`.
+
+**Warnings:** The runner emitted `warning: C3: no function found for this section`, and the corresponding warning for each of **D4, F1 and C4**. These four sections deliberately specify context-dependent operations without `cure_<code>` functions, so **they were not among the 7 loaded executable rules**. Their absence is not an empirical PASS for those manual operations.
+
+**Interpretation and scope:** This run establishes that the loaded rules and their combined application caused **zero measured gold-set changes or drops** on these 88 documents. It does **not** establish that the cleaning rules match or fix the labelled defective documents in the full 500-record review, that all disease subtypes are covered, or that privacy-related manual handling has been executed. Follow up with effectiveness/coverage checks on disease-positive pack documents. The SHA-256 above is the **code hash reported by the runner**, not a separately calculated SHA-256 of this updated Markdown file or of the gold/parquet inputs.
 
 ## Disease coverage in the final 500 labels
 
@@ -22,7 +58,7 @@
 
 **Below medicine threshold:** G1 (**4 documents**; detached Indic combining marks, context-specific repair only) and B5 (**1 document**; broken markup marker). These five diagnoses are fully labelled, but no generic executable medicine is justified by their limited evidence.
 
-**Suggested order for independently approved transformations:** B4 → A5 → narrowly scoped A6 → C1 → C5 → C2. D3 is an explicit no-op; C3, C4, D4 and F1 are context-dependent cleaning/privacy gates, **not** executable general medicines. This order is a proposal; the rules and their combination have not been gold-harm-tested.
+**Suggested cleaning order:** B4 → A5 → narrowly scoped A6 → C1 → C5 → C2. D3 is an explicit no-op; C3, C4, D4 and F1 are context-dependent cleaning/privacy gates, **not** executable general medicines. The supplied `--rule all` run reported a **PASS** for its implemented `ALL IN ORDER` sequence; the proposed order here is descriptive and should not be assumed identical without checking the runner’s extracted execution order. Verify positive-document effectiveness and combined-rule interactions before deployment.
 
 **Long-context preservation:** **12 documents** are tagged `Long-context candidate — use for long context` in the reviewed labels' `note` column, including both clean documents and documents with fixable defects. Do not impose a blanket short-length cap or drop them merely because they are long; preserve the coherent long-form text after authorized fixes. No long-context candidate has a `drop` verdict.
 
@@ -47,7 +83,7 @@
 
 3. **Action:** Fix by NFC normalization only; it does not override a document-level `drop` decision for other diseases.
 
-4. **Harm test:** **Pending** on the actual Marathi gold set. Record changed/dropped gold IDs and percentages; PASS only at ≤1% affected.
+4. **Harm test:** **PASS** — reported A5 result: **0 changed, 0 dropped / 88 gold documents (0.00%)**. This demonstrates no measured gold-set harm in the supplied run, not the frequency or effectiveness of NFC repairs on A5-positive documents.
 
 5. **Side effects:** NFC changes code-point sequences and may invalidate offsets; NFC does **not** reconnect a detached matra/virama, repair OCR errors, or fix severe structural corruption. Count actual changes in the harm test rather than presuming they are harmless.
 
@@ -68,7 +104,7 @@
 
 3. **Action:** Keep unchanged for D3. Apply separate, independently tested medicines if the same document also has another disease. **28 reviewed D3-only documents** have a `fix` verdict in the source labels. Preserve those verdicts as submitted, but do not treat this no-op as a text correction or report 28 documents changed. Any separate transformation must be justified by another disease or a specifically documented operation.
 
-4. **Harm test:** A no-op has **0 changed and 0 dropped documents by construction**; this is not an empirical gold-set result and does not establish effectiveness. Empirical testing has not been supplied for the other candidate rules.
+4. **Harm test:** **PASS** — reported D3 result: **0 changed, 0 dropped / 88 gold documents (0.00%)**. This is expected from the D3 no-op and does **not** show that any of the 28 D3-only `fix` records were corrected.
 
 5. **Side effects:** No direct mutation. The risk is *over-cleaning by other medicines*: an English name, English headline, or Sanskrit quotation is not necessarily C1/C5 boilerplate or A6 corruption.
 
@@ -110,7 +146,7 @@
 
 3. **Action:** Fix only matching boilerplate lines. A `drop` verdict remains if no coherent article survives.
 
-4. **Harm test:** **Pending.** Test against gold documents, inspect every removed line, and verify ≤1% changed/dropped before considering approval.
+4. **Harm test:** **PASS** — reported C1 result: **0 changed, 0 dropped / 88 gold documents (0.00%)**. Separately verify that the boilerplate matcher removes intended lines from C1-positive documents without erasing article content.
 
 5. **Side effects:** Some genuine article text could begin with one of the listed phrases, and boilerplate embedded mid-paragraph is intentionally not removed. This rule is conservative; context-specific cleanup is needed for more complex cases.
 
@@ -144,7 +180,7 @@
 
 3. **Action:** Fix only verified exact repeated prefixes, keeping the first occurrence. Review other C2 variants manually.
 
-4. **Harm test:** **Pending.** Include examples of legitimate repeated prose in gold and measure changed/dropped gold IDs (≤1% threshold).
+4. **Harm test:** **PASS** — reported C2 result: **0 changed, 0 dropped / 88 gold documents (0.00%)**. Check actual C2-positive documents for matched duplicate leads and valid output joins; this result alone does not prove deduplication effectiveness.
 
 5. **Side effects:** Repeated opening text may be intentional (poetry, quotations, structured articles). The strict rule misses shorter duplicates and OCR-altered copies, which is preferable to deleting uncertain content. Check the resulting join around the removed span.
 
@@ -175,7 +211,7 @@
 
 3. **Action:** Fix the mixed-digit subtype only; handle remaining A6 occurrences through verified context-specific repairs or separately tested medicines; do not pretend that the mixed-digit rule covers all 45 A6 documents.
 
-4. **Harm test:** **Pending.** Verify on the gold set that mixed-script numbers are actually unwanted, and record changed/dropped gold counts (≤1%).
+4. **Harm test:** **PASS** — reported A6 result: **0 changed, 0 dropped / 88 gold documents (0.00%)**. This test covers the executable mixed-digit rule, not all other A6 subtypes. Check positive mixed-digit examples separately.
 
 5. **Side effects:** Even mixed-script digits can occasionally be deliberate; global Latin removal, blanket hyphen replacement, or indiscriminate `U+00BA` substitution would risk damaging legitimate names and D3 code-mixing.
 
@@ -185,8 +221,7 @@
    - `5cd1cc2146075a9f`: literal `\n` near offset 81 (3 occurrences).
    - `09f78635c7686fd8`: literal `\n` near offset 14 (11 occurrences).
    - `8f3c76c4c4ad8584`: literal `\n` near offset 109 (13 occurrences).
-   - **Additional reviewed example (rows 351–500 unless noted):** `3561e05403291f93`: literal `
-` near offset 42 (99 occurrences).
+   - **Additional reviewed example (rows 351–500 unless noted):** `3561e05403291f93`: literal `\n` near offset 42 (99 occurrences).
 
 2. **Medicine:** Convert the literal two-character sequence `\n` to a newline **only for this identified prose subtype**. Run before line-based C1/C5/C2 cleaning.
 
@@ -200,7 +235,7 @@
 
 3. **Action:** Fix escaped newlines when they recur as prose formatting artifacts.
 
-4. **Harm test:** **Pending.** Test on the Marathi gold set and inspect any changed gold record; PASS requires ≤1% affected.
+4. **Harm test:** **PASS** — reported B4 result: **0 changed, 0 dropped / 88 gold documents (0.00%)**. Confirm on B4-positive prose documents that literal escaped newlines are correctly converted and genuine technical escapes are preserved.
 
 5. **Side effects:** Technical quotations can legitimately include `\n`. The recurrence threshold reduces but does not eliminate that risk. Other escaped control sequences are left untouched.
 
@@ -216,7 +251,7 @@
 
 3. **Action:** Fix only with verified source/boundary; **drop** when no coherent content remains (as in `0ad004d5deb1e7fe`, labelled `drop`).
 
-4. **Harm test:** **Not run; no executable candidate.** Once a safe, deterministic repair is proposed, evaluate it against gold before approval. A manual review outcome is not a programmatic harm-test PASS.
+4. **Harm test:** **Not executed** by this run: no executable `cure_c3` function (runner warning: `C3: no function found for this section`). This manual/context-specific operation has **no measured PASS or FAIL**; any future automatic repair needs separate evaluation.
 
 5. **Side effects:** Trimming near punctuation can remove legitimate text; generating a missing ending would invent content. Some incomplete-looking passages are intentional excerpts.
 
@@ -233,7 +268,7 @@
 
 3. **Action:** **Drop the 20 documents marked `drop`**, including `9e41a5d56ac92089` and `f94044ff48697280` (both now labelled `full`); retain the single `fix` document for a limited, source-faithful wording repair. All 21 diagnoses are final reviewed labels.
 
-4. **Harm test:** **Not run; no executable candidate.** Any future automatic D4 detector/dropper needs independent gold-set evaluation and ≤1% affected-gold validation.
+4. **Harm test:** **Not executed** by this run: no executable `cure_d4` function (runner warning: `D4: no function found for this section`). No D4 manual exclusion or targeted repair was harm-tested; any future automatic detector/dropper needs separate validation.
 
 5. **Side effects:** Unusual idioms, literary style and natural code-mixing could be mistaken for bad translation. Avoid applying a broad language-quality classifier without validation.
 
@@ -249,7 +284,7 @@
 
 3. **Action:** Fix by verified, privacy-preserving redaction; otherwise **drop**. Do not release an unredacted F1 record.
 
-4. **Harm test:** **Not run; no executable candidate.** Future redaction rules require separate privacy-recall checks **and** gold-set harm testing; changing 0 gold documents does not guarantee they detect private data.
+4. **Harm test:** **Not executed** by this run: no executable `cure_f1` function (runner warning: `F1: no function found for this section`). Privacy redaction is **not** covered by the PASS; future redaction rules require privacy-recall checks and gold-set harm tests.
 
 5. **Side effects:** A broad name/address detector can erase legitimate public references; a narrow detector can miss sensitive data. The label's `hex` and evidence should never reproduce private values.
 
@@ -265,7 +300,7 @@
 
 3. **Action:** Fix by a provenance-preserving split/removal when possible; **drop** when the surviving text is not coherent (`d89a364142de1d38` and `9910e11f3461f5d0` are labelled `drop`).
 
-4. **Harm test:** **Not run; no executable candidate.** Any future split rule must test gold preservation, boundary accuracy, and document-ID handling.
+4. **Harm test:** **Not executed** by this run: no executable `cure_c4` function (runner warning: `C4: no function found for this section`). Any future split rule must test gold preservation, boundary accuracy, and document-ID handling.
 
 5. **Side effects:** Legitimate bilingual quotations, interviews, and multi-section articles may look like joined documents; blind splitting can corrupt source context.
 
@@ -296,7 +331,7 @@
 
 3. **Action:** Fix standalone matched tag lines; remove other verified contamination with a context-specific operation. **Drop** documents composed almost entirely of navigation/headline lists (e.g., `5c0626f06c750fcf`), consistent with their labels.
 
-4. **Harm test:** **Pending.** Measure affected gold IDs at the 1% threshold; also check recall on the actual labelled C5 documents because this narrow rule deliberately leaves many C5 forms untouched.
+4. **Harm test:** **PASS** — reported C5 result: **0 changed, 0 dropped / 88 gold documents (0.00%)**. Check recall on labelled C5-positive documents: this narrow tag-line rule intentionally does not address many headline-list variants.
 
 5. **Side effects:** Metadata examples and instructional prose can contain genuine `Tags:` or `Keywords:` lines. Broadly deleting any list or headline would destroy real content. Some C5 overlaps C1, so combined-rule effects must be assessed separately.
 
@@ -308,10 +343,10 @@
 - **D3 semantics:** The labels contain **28 D3-only `fix` documents** even though the D3 medicine deliberately leaves text unchanged. These reviewed labels are preserved. Do not claim a D3 cleaning change or invent a mutation to make a `fix` label match the no-op.
 - **D4 outcomes:** Apply the reviewed outcome, **20 `drop` and 1 `fix`**, rather than the earlier all-drop assumption. Do not rewrite heavily corrupted content just to retain it.
 - **Rule extraction:** Only the sections with `cure_<code>` functions are *executable candidates*: A5, D3 (no-op), C1, C2, A6 (mixed numerals only), B4 and C5. C3, C4, D4 and F1 are intentionally non-executable source/context/privacy gates. Below-threshold G1 and B5 have no general medicine.
-- **Gold harm tests:** The provided medicine and label files contain **no executed two-reader gold-set harm report**. Run each executable candidate against the refreshed official Marathi gold set and original parquet; record input hashes, changed/dropped gold IDs and affected percentage. Do not claim empirical PASS unless the observed change+drop percentage meets the required **≤1%** threshold. A no-op causing zero changes does not show cleaning effectiveness.
-- **Effectiveness and clashes:** Measure recall and actual changes on reviewed, disease-positive documents separately from gold-set harm. Resolve overlaps (especially C1/C5, A5/A6, B4/C1/C2), select the intended medicine per disease, and harm-test the *combined* sequence as well as individual candidates.
+- **Gold harm tests:** **Completed in the supplied `harm_test.py` output** for **88 Marathi gold documents**: seven executable medicines and `ALL IN ORDER` reported **0 changed, 0 dropped, 0.00%, PASS**. The harness allowed a maximum of **1 changed/dropped document**. See the command, reported code SHA-256 and complete table above. C3, D4, F1 and C4 were not executed because they contain no rule function. This report is user-supplied run output, not a re-run performed for this document update.
+- **Effectiveness and clashes:** The reported individual and combined **gold-harm PASS** does not prove positive-label cleaning coverage, especially because all seven rules changed zero gold documents. Measure recall and actual changes on reviewed, disease-positive pack documents. Check overlaps (especially C1/C5, A5/A6, B4/C1/C2), verify the actual harness execution order, and separately evaluate any revised combined pipeline.
 - **Long context:** Preserve all 12 flagged long-context candidates. If a candidate also has C3 or other fixable defects, apply the documented cleanup while retaining the coherent long-form span; do not globally truncate.
 - **Privacy:** For F1, publish **type and offset**, never private values in examples, logs, rule code, diffs or reports. Redact or exclude affected source text before release.
 - **Indic text safety:** Keep ZWJ and ZWNJ, avoid NFKC and global deletion of spaces around matras/viramas. G1 repairs require precise contextual evidence; do not derive a generic rule from four documents.
 
-**Interpretation:** Label diagnosis is complete; the medicine proposals are not evidence that cleaning has already been run or that official gold-set harm gates have been passed.
+**Interpretation:** Label diagnosis is complete. The supplied gold-set harm run **passed** for all seven executable rules and `ALL IN ORDER` (88 gold documents; 0 changed, 0 dropped). This safety result does **not** establish positive-document cleaning effectiveness or cover the four non-executable manual gates.
