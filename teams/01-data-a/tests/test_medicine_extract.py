@@ -475,6 +475,33 @@ class DirCase(unittest.TestCase):
         self.assertIn("no rules: code-rust/bob", out)
         self.assertIn("no '**Disease:**", err)
 
+    def test_a_deleted_medicine_withdraws_its_rules(self):
+        self.medicine("code-rust", "alice", self.b3())
+        self.medicine("code-rust", "bob", self.b3())
+        self.run_dir()                                                              # DA-B3-001 alice, -002 bob
+        (self.src / "code-rust" / "bob" / "medicine.md").unlink()                  # bob's PR closed
+        rc, out, _ = self.run_dir()
+        self.assertEqual(rc, 0)
+        self.assertTrue(self.entries()["DA-B3-002"]["withdrawn"])
+        self.assertFalse(self.entries()["DA-B3-001"]["withdrawn"])
+        self.assertFalse((self.tmp / "rules" / "code-rust" / "bob.py").exists())
+        self.assertIn("medicine.md gone, rules withdrawn: code-rust/bob", out)
+        self.medicine("code-rust", "bob", self.b3())                               # bob comes back
+        self.run_dir()
+        self.assertFalse(self.entries()["DA-B3-002"]["withdrawn"])                 # with the same ID
+
+    def test_a_folder_with_one_pack_leaves_the_other_packs_alone(self):
+        self.medicine("code-rust", "alice", self.b3())
+        self.medicine("en-dclm", "carol", self.b3())
+        self.run_dir()
+        (self.src / "en-dclm" / "carol" / "medicine.md").unlink()                  # a --pack-id code-rust fetch:
+        (self.src / "en-dclm" / "carol").rmdir()                                    # only code-rust is in the folder
+        (self.src / "en-dclm").rmdir()
+        rc, out, _ = self.run_dir()
+        self.assertEqual(rc, 0)
+        self.assertFalse(any(e["withdrawn"] for e in self.entries().values()))
+        self.assertTrue((self.tmp / "rules" / "en-dclm" / "carol.py").exists())
+
     def test_arguments(self):
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
