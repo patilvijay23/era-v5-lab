@@ -1,101 +1,101 @@
 doc_id,read,verdict,diseases,evidence,hex,note
-8c1aed2f8a439b91,full,fix,C1;C2,"C1: 'MIT Introduction to Deep Learning introtodeeplearning.com @MITDeepLearning' at offset 3029 (7x); C2: repeated content block offset 7063 and 7281 | C2: additional automated matches at offsets 56, 3063, 6944 (verify context)",,Repeated lecture-slide title and footer; remove repeated material while preserving unique lecture content. Finding confirmed by inspected evidence.
-6d2428a3ad8e41d6,full,fix,C1; F1,"C1: newsletter boilerplate from offset 0 to 721 and from offset 17445 to EOD; F1: cell number at offset 19905 19125 19890 | F1: additional automated matches at offsets 1733, 17738, 17897 (verify context)",,Faith-based newsletter; remove the publicly listed business phone number.
-2e1a062fc21d315b,full,clean,,,,Airline press release; retain the opening and closing conventions as meaningful examples of press-release structure.
-50cc681aabd3d82b,full,fix,F1,"F1: US-style phone candidate/street address candidate at 94109, 218472, 219856, 219964 (more detections; see findings.csv)",,School board meeting minutes; remove phone number and addresses; use for long context
-507d7cf0978d22e4,full,fix,F1,"F1: street address candidate/email address candidate at 9247, 12557, 12600, 12641",,Legal correspondence; remove email address and street address; use for long context
-3db737dca1122c53,full,fix,C2,C2: 'Test Overview and Tips for Maximizing Your Score' at offset 1137,,Complete STEP 1 outline repeats under STEP 8; remove the duplicate.
-33d1f7b3eec4d2c0,full,fix,C1,C1: News article boilerplate from offset 0 to 233,,Standalone article; remove boilerplate but preserve original editorial references to associated tour dates.
-b0d032fadb33dbf4,full,fix,F1,"F1: street address candidate/US-style phone candidate at 78, 7697, 7715, 8205, etc.",,Council meeting minutes; remove addresses and phone numbers.
-b7c735b64d1af67a,full,clean,,,,Legal tax document.
-55f375144ed541bf,full,clean,,F1: email address candidate at 4423 but it is a example.com email so pre cleaned,,"Medical document; includes correctly formed LaTeX, e.g., \textsuperscript{1,2,3} at offset 147."
-73fbd40e1111121e,full,fix,C2;F1,"C2: repeated line at 88385, 88430, 108396; F1 street address candidate/US-style phone candidate at 386, 449, 513, 55577 (more detections; see findings.csv)",,"Municipal document; remove duplicated content, phone number, and email address; use for long context"
-8b5b54304788333e,full,fix,F1,"F1: street address candidate at 506, 5131, 6242",,Medical document; remove addresses; use for long context
-854af92dbde41a63,full,fix,F1,"F1: street address candidate/US-style phone candidate at 100, 145, 162, 209 (more detections; see findings.csv)",,Municipal document; remove addresses.
-776e2d329eaeeb77,full,clean,,,,Mathematics document; contains formatted formulas.
-e44cb4676171abba,full,fix,F1,"F1: US-style phone candidate/email address candidate at 167, 193, 215, 552 (more detections; see findings.csv)",,Legal document; remove addresses.
-7ea84af3398cb3ed,full,fix,B2;B5;C2;F1,"B2: HTML/XML tag at 445945, 446002, 446386; B5: unmatched display-math delimiter at 613884; C2: repeated line at 218309, 218341, 218374; F1: street address candidate/email address candidate at 1713, 14642, 79805, 79870",,Meeting notes; fix all identified issues; use for long context
-8acbf1b8c927795d,full,fix,F1,"F1: street address candidate/US-style phone candidate at 654, 717, 744, 206042 (more detections; see findings.csv)",,Proposal PDF; remove addresses; use for long context
-4f3067e9d3a6b2b8,full,clean,,,,Indian business brochure.
-cb2c6fb11ebf329e,full,clean,,,,News article about entrepreneurship.
-494eabee8799f93a,full,clean,,,,Business idea document.
-50f74766355f26d3,full,fix,F1,"F1: email address candidate at 533, 2923, 53569",,Medical document; remove email addresses.
-c298d58f6344ddde,full,clean,,,,Medical document.
-c6acd9e6d213d6f4,full,fix,F1,"F1: street address candidate at 814, 1387",,Racial history document.
-4656c1ed1d4393c4,full,fix,C2,"C2: repeated line at 3824, 4274, 5149 ""Metal concentrations (mg/kg dw) in the ASS-affected estuary sediments""",,Environmental science document; remove the repeated line.
-a243639493a0e633,full,fix,C1;F1,"C1 web navigation / cookie boilerplate at 86129; F1 street address candidate/US-style phone candidate at 145, 187, 35180, 35224 (more detections; see findings.csv)",,Environmental science document; remove boilerplate and addresses; use for long context
-eee25e81417bc1b7,full,clean,,,,Environmental science document.
-83449c2d7a1d9e03,full,clean,,,,Legal and educational document.
-cc26121e33c42f1b,full,drop,C1,C1: all boilerplate,,Document consists only of boilerplate; drop.
-2d2c43ce5f335d3d,full,clean,,,,Product certification document.
-51a4fb599da754db,full,fix,C3,C3: document starts midway but remove data until offset 1361,,Remove the partial text at the beginning.
-053c80cc1a9b16bc,full,fix,F1,"F1: email address candidate/street address candidate at 1015, 1216, 1616, 1877",,Public utilities form; remove email addresses; use for long context
-6acc7c94105bdebd,full,fix,C1;F1,C1: web navigation / cookie boilerplate at 7232; F1: email address candidate at 7142,,Medical article; remove website navigation boilerplate and email addresses.
-42251c5ad07d17d4,full,fix,C1;F1,"C1: web navigation / cookie boilerplate at 1839, 2245, 2866; F1: US-style phone candidate/email address candidate at 393, 415, 645, 694",,"Public meeting email; remove boilerplate, email address, and phone numbers."
-dbc199ea29145c03,full,clean,,,,Historical document about World War II.
-5899e41d188800b4,full,fix,F1,F1: street address candidate at 160,,Legal and medical document; remove addresses.
-b44b092b0e829a12,full,fix,F1,"F1: email address candidate/US-style phone candidate at 39, 86",,Résumé; remove phone number and address.
-fb2ef557617d7ad1,full,fix,F1,"F1: street address candidate/US-style phone candidate at 100, 3433, 3455, 3541",,Church newsletter; remove phone number and addresses.
-54cb8c8803e08af4,full,clean,,,,Environmental assessment; use for long context
-e297884606b7596d,full,clean,,,,Military activity report.
-5e5ff4de55e7e018,full,fix,F1,"F1: email address candidate/US-style phone candidate at 14861, 14879",,Remove email address and phone numbers.
-6da51c7f3a3b6ff4,full,fix,F1,"F1: street address candidate/US-style phone candidate at 16813, 16848, 16868, 16890",,Education report; remove address and phone number.
-d20d4f04e5704ba7,full,fix,F1,"F1: email address candidate at 89, 145",,Research PDF; remove email address.
-53ff455424cff71f,full,fix,C1;F1,C1: web navigation / cookie boilerplate at 404; F1: email address candidate at 774,,History article; remove boilerplate and email address.
-d1a387dea20a1242,full,fix,F1,"F1: street address candidate at 8030, 8305",,Church newsletter; remove street address; use for long context
-26a07693d706218f,full,drop,C3,C3: document ends with very few questions and is dominated by the TOC,,Table of contents with incomplete document content; drop.
-ae07689169b90384,full,clean,,,,Music history document.
-06b18306786f56a5,full,fix,C1,"C1: unrelated content boilerplate in betwween at offsets 0, 551, 995, 2433 to 2538",,Apartment brochure; remove boilerplate lines.
-3b215cb29425e7d6,full,fix,F1,"F1: street address candidate at 1054, 4291, 4888",,Remove addresses.
-ecf88dd0f06c4b35,full,fix,F1,"F1: US-style phone candidate/email address candidate at 933, 951, 1105, 56094",,School brochure; remove phone number and addresses; use for long context
-7ee29203d895d80f,full,fix,F1,"F1: email address candidate/US-style phone candidate at 4744, 4883, 5147",,Council meeting document; remove address and phone numbers.
-9c3996ebe2857e30,full,clean,,,,Legal court proceedings.
-6339f30546c81c2e,full,clean,,,,School activity article.
-0e4cfb3b81d67dc5,full,drop,,,,Appears to contain only image captions describing Jupiter’s moons.
-07b068caa59048f9,full,fix,F1,"F1: street address candidate/US-style phone candidate at 3630, 4341",,Remove phone number and addresses.
-a6dca2c281646a03,full,clean,,,,Legal document; use for long context
-2b0f374583268f3c,full,drop,C2;F1,"C2: repeated line at 5463, 20350, 20389; F1 US-style phone candidate/street address candidate at 67, 2040, 2554, 2724",,Legal form; limited standalone training value.
-0798582b775b470f,full,drop,F1,"F1: street address candidate/email address candidate at 113, 528, 840, 891",,Racetrack certification; limited standalone training value.
-08b7ae2fa0363275,full,clean,,,,Legal and government document.
-3c2aebcdc61e5694,full,fix,F1,F1: sanitized email address,,Investment document; remove email
-35eb8b91a98d3a41,full,clean,,,,Society meeting minutes; use for long context
-c9df663ed9fb5bea,full,clean,,,,Scientific report.
-6e54aa31a9a0611e,full,fix,F1,"F1: street address candidate/US-style phone candidate at 41075, 41123",,Technical specifications; remove phone number and email address.
-3cdf7221196813da,full,fix,F1,"F1: US-style phone candidate candidate at 14353, 14379, 14572, 14598",,Service agreement; remove phone numbers; use for long context
-1cc10779aced9a7f,full,clean,,,,Business document.
-44f66c3734e3d5ca,full,drop,,,,Appears to consist largely of image captions.
-192aba9b7f84e8ca,full,clean,,,,Research paper; use for long context
-93adf8697409e36c,full,fix,C1;F1,"C1: Boilerplate tagline 'We link all you need and more than you expect.' at 58; F1 email address candidate at 12682, 12836 but sanitized",,Remove boilerplate.
-5bf37f2a0813d0c1,full,clean,,,,Job candidate assessment.
-7baed34b2308e9c5,full,drop,,,,Contains numerous image captions without the corresponding images.
-bd1a8bb7d789e910,full,clean,,,,Legal document.
-7851ac162534fb8a,full,clean,,,,Research paper.
-373b76e02c705704,full,clean,,,,Legal document.
-5938b33ca03c380a,full,fix,F1,"F1: street address candidate/US-style phone candidate at 60, 119, 145, 168",,Legal document; remove addresses and numbers; use for long context
-920855df51f37db8,full,clean,,,,Research paper.
-cdc5973ec2161f44,full,fix,F1,F1: sanitized email address candidate at 6043,,Research paper; contains LaTeX; use for long context; remove email
-9110713e77637024,full,drop,,,,List of winners without sufficient context; limited standalone training value.
-19e4332d89d32061,full,fix,F1,F1: street address candidate at 3356,,Newspaper article; remove address.
-0d8b7d532a14c69a,full,clean,,,,Economic essay.
-b09404dd12a456be,full,fix,F1,F1 email address candidate at 288,,Research paper; remove email address.
-795fa56071e88c0c,full,clean,,,,Research paper; contains LaTeX.
-8c2c1359b53f9442,full,fix,F1,"F1: sanitized email address candidate/street address candidate at 3353, 18652, 18710, 20900, phone number at offset 20616",,Remove street address and phone number.
-bfbe6f0f5d61c19e,full,drop,C1; D3,"C1: navigation and page continuation boiler plate at offset 3622, 6208, 6347; D3: Switches to German in between for two pages",,Difficult to clean.
-9486f7dfe7c330e3,full,clean,,,,Boat food menu.
-fb58071a2b5e5cdb,full,clean,,,,Election results summary.
-41f54eb5c63d60cc,full,clean,,,,Interview transcript.
-75611d2315b9312e,full,fix,F1,F1: sanitized email address candidate at 19082,,Research paper; remove email
-0f04545eee94d987,full,fix,F1,F1: sanitized email address candidate at 2948,,Research paper; contains LaTeX; remove email
-e554caf656494ae2,full,fix,C1;F1,"C1: web navigation / cookie boilerplate at 86; F1: sanitized email address candidate/SSN-shaped ID candidate at 26361, 60581, 60613, 222036",,Remove the boilerplate line; use for long context
-a3472c2ba98c2551,full,clean,,,,Financial summary; use for long context
-7b3bae075770d199,full,fix,C1,C1: web navigation / cookie boilerplate at 4215,,Disney advertisement; remove boilerplate.
-5f7545c1f4a386b1,full,fix,C1;F1,"C1: TOC offset 0 to 2198; F1 street address candidate at 394, 2358, 219602",,Book; remove table of contents and address; use for long context
-a6e70d0fef431172,full,fix,F1,"F1: email address candidate/US-style phone candidate at 143, 167, 188, 21018 (more detections; see findings.csv)",,Technical document; remove phone numbers; use for long context
-32e5e0b143c36d65,full,drop,F1,"F1: street address candidate at 3236, 7545, 20205, filled with names",,Conference summary with participant names; limited standalone training value.
-c6d6f16f70df8b71,full,fix,C1,C1: TOC offset 1507 to 2737,,Remove table of contents.
-510796b2fbb42bb7,full,fix,C2;F1,"F1: street address candidate/phone number candidate at 75, 4103, 5811, 5824",,Council meeting summary; remove street address and phone numbers; use for long context
-d0a0a41263e845f5,full,clean,,,,Nutrition document.
-4b958ac1f45443b5,full,fix,C1,C1 web navigation / cookie boilerplate at 2654 '© 2017 Elsevier Ltd. All rights reserved.',,Research paper; remove boilerplate.
-9397bad7ea9147ce,full,clean,,,,Stock market news article.
-650e04c676aed57f,full,fix,C2;F1,"F1: street address candidate/US-style phone candidate at 2799, 3008, 3079, 3230 (more detections; see findings.csv)",,Complete newspaper with multiple articles; uncertain whether to drop; remove phone numbers.
-ee1386df10972650,full,drop,F1,F1: list of names,,Meeting minutes containing numerous names; either redact the names or drop the document.
+8c1aed2f8a439b91,full,fix,C1;C2,C1: repeating slide footer at offset 3029 | C2: repeated lecture explanation at offset 6944,,Repeated lecture-slide footer and duplicated adversarial-attack explanation; remove only verified duplication.
+6d2428a3ad8e41d6,full,clean,,,,"Faith newsletter; publicly listed ministry contact numbers, venue details, and example-domain email are not private-person F1."
+2e1a062fc21d315b,full,clean,,,,Airline regulatory correspondence; institutional letterhead is valid content.
+50cc681aabd3d82b,full,clean,,,,School-board minutes and public governmental/project contact details; scanner matches are not proven private data. Long-context candidate — use for long context.
+507d7cf0978d22e4,full,clean,,,,"Court/legal record; listed firm and corporate counsel offices are professional contacts, not private-person F1. Long-context candidate — use for long context."
+3db737dca1122c53,full,fix,C2,C2: repeated test outline at offset 1137,,Test-preparation outline repeated under another step; deduplicate matching content.
+33d1f7b3eec4d2c0,full,fix,C1,C1: publisher wrapper at offset 0,,Remove publisher URL/headline wrapper; retain the full entertainment news article.
+b0d032fadb33dbf4,full,fix,F1,F1: individual direct telephone at offset 7697,,"Municipal agenda; redact a named event contact’s direct number, retaining the public meeting information."
+b7c735b64d1af67a,full,clean,,,,Municipal tax ordinance; legal structure retained.
+55f375144ed541bf,full,clean,,,,Research paper; LaTeX is valid and the email placeholder is not private data.
+73fbd40e1111121e,full,fix,F1,F1: person-linked residential address at offset 386,,Planning agenda links named household applicants to residential addresses; redact only private-person locations. Long-context candidate — use for long context.
+8b5b54304788333e,full,clean,,,,"Dental-journal and professional organization contact addresses are institutional, not F1. Long-context candidate — use for long context."
+854af92dbde41a63,full,fix,F1,F1: person-linked contact/address at offset 100,,Campaign finance disclosure includes person-linked address/contact information; redact private-person fields only.
+776e2d329eaeeb77,full,clean,,,,Mathematics text; valid equations and display-math notation preserved.
+e44cb4676171abba,full,clean,,,,Government complaint: agency and attorney office contacts are public-facing; complainant already redacted.
+7ea84af3398cb3ed,full,fix,B2,B2: literal <br> tag at offset 445945 (HTML in extracted prose),,Municipal attachment includes literal HTML line-break tags; normal table repetition and currency signs are not C2/B5. Long-context candidate — use for long context.
+8acbf1b8c927795d,full,clean,,,,Adaptation Fund project form; institutional contact details are not private-person F1. Long-context candidate — use for long context.
+4f3067e9d3a6b2b8,full,clean,,,,Commercial product/materials catalogue with legitimate tables.
+cb2c6fb11ebf329e,full,clean,,,,Entrepreneurship article; topic is not a defect in a general-purpose PDF pack.
+494eabee8799f93a,full,clean,,,,Furniture catalogue; product description and specification data are useful.
+50f74766355f26d3,full,clean,,,,Published biomedical article; author correspondence uses generic example-domain addresses.
+c298d58f6344ddde,full,clean,,,,Biomedical research article with intact scholarly structure.
+c6acd9e6d213d6f4,full,clean,,,,Public Black History Month event schedule and invited speakers; no private residential data supported.
+4656c1ed1d4393c4,full,clean,,,,Scientific slide deck repeats table/figure headings by design; not a verified C2 duplicate.
+a243639493a0e633,full,fix,C1,C1: publication footer at offset 86104,,Remove standalone commercial publication footer in embedded proposal appendix; leave organizational contacts. Long-context candidate — use for long context.
+eee25e81417bc1b7,full,drop,D1;C4,D1: Finnish source text under eng_Latn label at offset 0 | C4: unrelated content begins near offset 1286 (image narration),,Finnish source slides mixed with unrelated generated English image narration; unsuitable without source-faithful reconstruction.
+83449c2d7a1d9e03,full,clean,,,,Education advisory-council document; valid structured evidence.
+cc26121e33c42f1b,full,clean,,,,Short but coherent product specification; brevity is not a disease.
+2d2c43ce5f335d3d,full,clean,,,,Product certification text; usable general-purpose document.
+51a4fb599da754db,full,fix,C3,C3: incomplete source boundary at offset 0,,Opening text starts in the middle of a quotation; trim only incomplete leading fragment.
+053c80cc1a9b16bc,full,clean,,,,Utility regulatory filing with agency/business contacts; no verified private-person identifiers. Long-context candidate — use for long context.
+6acc7c94105bdebd,full,fix,C3;C4,C3: incomplete source boundary at offset 9393 | C4: unrelated content begins near offset 7254 (interleaved section),,Two journal case reports concatenated; second report ends abruptly. Split at verified article heading.
+42251c5ad07d17d4,full,fix,C1,C1: publication footer at offset 1797,,Remove repeated proprietary/copyright boilerplate; retain government technical correspondence.
+dbc199ea29145c03,full,clean,,,,Historical narrative; literary prose is not a disease.
+5899e41d188800b4,full,clean,,,,"Public-records petition contains published attorney/newsroom office addresses, not residential F1."
+b44b092b0e829a12,full,fix,F1,F1: personal direct phone at offset 86,,Personal résumé exposes a direct telephone number; redact private contact without treating placeholder email as personal data.
+fb2ef557617d7ad1,full,fix,F1,F1: individual direct phone at offset 3433,,"Newsletter lists individuals’ direct phone/contact numbers; redact only those, not venue information."
+54cb8c8803e08af4,full,clean,,,,Environmental assessment; coherent extended analysis. Long-context candidate — use for long context.
+e297884606b7596d,full,clean,,,,Short historical military report; brevity is not a disease.
+5e5ff4de55e7e018,full,clean,,,,"County health department public coordinator contact is official, not F1."
+6da51c7f3a3b6ff4,full,clean,,,,School accountability report; school office contacts and aggregates are public.
+d20d4f04e5704ba7,full,clean,,,,Published research paper; institutional researcher emails are not private-person F1.
+53ff455424cff71f,full,clean,,,,Published conference proceedings; publication and author contact notices are part of the source.
+d1a387dea20a1242,full,fix,F1,F1: person-linked residential address at offset 8305,,Historical membership list links private residential addresses to named individuals; redact sensitive spans. Long-context candidate — use for long context.
+26a07693d706218f,full,drop,C3,C3: incomplete source boundary at offset 1085,,Extracted practice-exam text ends mid-question after an incomplete excerpt.
+ae07689169b90384,full,clean,,,,Music history/program notes are coherent prose.
+06b18306786f56a5,full,fix,C4,C4: unrelated content begins near offset 2482 (interleaved section),,Apartment descriptions interrupted by unrelated farmers-market text; remove the inserted unrelated passage.
+3b215cb29425e7d6,full,fix,F1,F1: person-linked residential address at offset 1054,,Historical personal-record file includes an identified claimant’s residential address.
+ecf88dd0f06c4b35,full,clean,,,,Career-center handbook contains public school office addresses and policy content. Long-context candidate — use for long context.
+7ee29203d895d80f,full,clean,,,,"Council meeting record contains official rail-safety contacts, not private-person F1."
+9c3996ebe2857e30,full,clean,,,,"Published appellate court decision, complete argumentative legal text."
+6339f30546c81c2e,full,clean,,,,School camp article; short narrative content is valid.
+0e4cfb3b81d67dc5,full,drop,C2,C2: repeated figure-label fragment at offset 2,,Text consists almost entirely of near-identical figure/satellite label fragments with no supporting exposition.
+07b068caa59048f9,full,clean,,,,University performing-arts program has public box-office and institution contacts.
+a6dca2c281646a03,full,clean,,,,Long legislative statute; coherent legal sections and numbering. Long-context candidate — use for long context.
+2b0f374583268f3c,full,clean,,,,Regulatory discharge-monitoring forms contain meaningful tables; repeated field labels are structural.
+0798582b775b470f,full,clean,,,,Race-course certification has meaningful instructions; example-domain emails and public course contacts are not F1.
+08b7ae2fa0363275,full,clean,,,,Long government/political article; topic is valid for general-purpose PDF data.
+3c2aebcdc61e5694,full,clean,,,,Published actuarial paper; generic contact placeholder is not personal data.
+35eb8b91a98d3a41,full,clean,,,,Long historical legislative proceedings; preserve for long-context training. Long-context candidate — use for long context.
+c9df663ed9fb5bea,full,clean,,,,Geology examination report; legitimate recurring scientific terminology.
+6e54aa31a9a0611e,full,clean,,,,Commercial lock specification and business contact block are not F1.
+3cdf7221196813da,full,clean,,,,County procurement agreement gives official agency contacts rather than private-person data. Long-context candidate — use for long context.
+1cc10779aced9a7f,full,clean,,,,Bank disclosure statement; accounting tables are legitimate.
+44f66c3734e3d5ca,full,drop,D1;C4,D1: Latvian source text under eng_Latn label at offset 0 | C4: unrelated content begins near offset 2200 (interleaved section),,"Latvian museum presentation mislabeled English, interleaved with unrelated multilingual/generated image captions."
+192aba9b7f84e8ca,full,clean,,,,Linguistics research paper with valid bibliography and long-form content. Long-context candidate — use for long context.
+93adf8697409e36c,full,clean,,,,Commercial valve catalogue; marketing tagline and vendor business emails are ordinary content.
+5bf37f2a0813d0c1,full,clean,,,,Academic evaluation letter; document topic is valid for a general-purpose PDF pack.
+7baed34b2308e9c5,full,clean,,,,Image-dependent educational worksheet contains coherent questions; missing figures alone lack a listed disease.
+bd1a8bb7d789e910,full,clean,,,,Legal protective-order document; valid templates and signatures.
+7851ac162534fb8a,full,clean,,,,Scientific monograph; long-form bibliography and taxonomy preserved.
+373b76e02c705704,full,clean,,,,Court disciplinary decision; tables and legal formatting are legitimate.
+5938b33ca03c380a,full,clean,,,,"Public court filing includes law-firm office details, not proven private residential contacts. Long-context candidate — use for long context."
+920855df51f37db8,full,clean,,,,Engineering research paper with properly structured references.
+cdc5973ec2161f44,full,clean,,,,Published neuroscience review; legitimate LaTeX and public scholarly contact. Long-context candidate — use for long context.
+9110713e77637024,full,clean,,,,Historical statistical tables and accompanying explanatory prose; not a valueless list.
+19e4332d89d32061,full,clean,,,,"Historical newspaper has public publishing-business address, not private F1."
+0d8b7d532a14c69a,full,clean,,,,Economics article; coherent analysis.
+b09404dd12a456be,full,clean,,,,Published academic study with professional author emails.
+795fa56071e88c0c,full,clean,,,,Plant-pathology article with valid formula and citation syntax.
+8c2c1359b53f9442,full,fix,F1,F1: individual direct phone/address at offset 3340,,Village newsletter includes private individuals’ direct phone/contact and location information.
+bfbe6f0f5d61c19e,full,fix,C1;D3,C1: repeated page header at offset 3622 | D3: natural English–German mixing near offset 6897,,Remove repeated editorial-page header; retain coherent zither newsletter and natural German terms/passages.
+9486f7dfe7c330e3,full,clean,,,,Historical dining menu; legitimate categorical food list.
+fb58071a2b5e5cdb,full,clean,,,,Election results and numerical tables are valid data.
+41f54eb5c63d60cc,full,clean,,,,Oral-history interview transcript; natural repetitions should remain.
+75611d2315b9312e,full,clean,,,,Published dermatology research; placeholder correspondence email is not F1.
+0f04545eee94d987,full,clean,,,,Published biomedical study; LaTeX commands are syntactically meaningful.
+e554caf656494ae2,full,clean,,,,Published iRODS conference proceedings; standard cover/title/references and example emails. Long-context candidate — use for long context.
+a3472c2ba98c2551,full,clean,,,,Long consolidated financial report; retain structured accounting content. Long-context candidate — use for long context.
+7b3bae075770d199,full,clean,,,,"Disney promotional text is the subject content, not external site-navigation boilerplate."
+5f7545c1f4a386b1,full,clean,,,,"Long historical book; table of contents is genuine book structure, not C1 boilerplate. Long-context candidate — use for long context."
+a6e70d0fef431172,full,fix,F1,F1: instructor cell phone at offset 167,,Training presentation includes a named instructor’s direct cell number; redact only direct personal contact. Long-context candidate — use for long context.
+32e5e0b143c36d65,full,clean,,,,"Conference participant roster has professional affiliations, not private-person residential contacts."
+c6d6f16f70df8b71,full,clean,,,,Edited-volume table of contents is valid document structure.
+510796b2fbb42bb7,full,clean,,,,Council agenda and project report contain official public contacts; repeating report headings are structural. Long-context candidate — use for long context.
+d0a0a41263e845f5,full,clean,,,,Nutrition science textbook excerpt; coherent technical content.
+4b958ac1f45443b5,full,clean,,,,Published research paper; copyright notice belongs to publication and is not automatically boilerplate.
+9397bad7ea9147ce,full,clean,,,,Market news article; coherent report.
+650e04c676aed57f,full,clean,,,,Multi-article newspaper with business advertisements; public business phone numbers and section titles are not F1/C2.
+ee1386df10972650,full,clean,,,,College trustee minutes contain public officials and meeting votes; names alone are not personal-data F1.
