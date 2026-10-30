@@ -368,6 +368,39 @@ class IdCase(unittest.TestCase):
         self.assertEqual(self.entries()["DA-B3-001"]["file"], "code-rust/alice.py")
 
 
+    def test_a_sheet_that_no_longer_gives_any_rule_withdraws_its_ids(self):
+        path = self.write_medicine("code-rust", "alice", self.b3())
+        self.run_extract(path)                                                     # DA-B3-001, rules file written
+        self.run_extract(self.write_medicine("code-rust", "bob", self.b3()))      # DA-B3-002
+        broken = md("**Disease:** B3, markers", py("keep = [l for l in t.split() if not B3.match(l)]"))  # fragment only
+        rc, out, rules_file = self.run_extract(self.write_medicine("code-rust", "alice", broken))
+        self.assertEqual(rc, 1)
+        self.assertTrue(self.entries()["DA-B3-001"]["withdrawn"])
+        self.assertFalse(self.entries()["DA-B3-002"]["withdrawn"])               # other handles untouched
+        self.assertFalse(rules_file.exists())                                      # the stale rules file is gone
+        self.assertIn("DA-B3-001", out)
+        rc, _, rules_file = self.run_extract(self.write_medicine("code-rust", "alice", self.b3()))  # fixed again
+        self.assertEqual(rc, 0)
+        self.assertFalse(self.entries()["DA-B3-001"]["withdrawn"])                # same ID comes back
+        self.assertTrue(rules_file.exists())
+
+    def test_a_sheet_with_no_disease_line_withdraws_its_ids(self):
+        path = self.write_medicine("code-rust", "alice", self.b3())
+        self.run_extract(path)
+        rc, _, _ = self.run_extract(self.write_medicine("code-rust", "alice", "doc_id,read,verdict\n"))  # labels pasted
+        self.assertEqual(rc, 1)
+        self.assertTrue(self.entries()["DA-B3-001"]["withdrawn"])
+
+    def test_a_file_the_tool_did_not_write_is_kept(self):
+        path = self.write_medicine("code-rust", "alice", md("**Disease:** B3, x", py("keep = B3.sub('', t)")))
+        own = self.tmp / "rules" / "code-rust" / "alice.py"
+        own.parent.mkdir(parents=True, exist_ok=True)
+        own.write_text("# hand-written, not generated\n")
+        rc, _, _ = self.run_extract(path)
+        self.assertEqual(rc, 1)
+        self.assertTrue(own.exists())
+
+
 class DirCase(unittest.TestCase):
     """--dir: many medicine.md files, one run, one registry."""
 
