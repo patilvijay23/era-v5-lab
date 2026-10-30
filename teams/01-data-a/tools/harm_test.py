@@ -11,7 +11,7 @@ Usage:
     --rules     a .py file, or a medicine.md file whose ```python blocks hold the code. Not needed for a rule ID:
                 the registry says which file medicine_extract.py wrote the rule to
     --registry  the registry file (default: ../rules/registry.json)
-    --limit     the failing limit in percent of the gold set (default 1)
+    --limit     the failing limit in percent of the gold set (default 1); at least 1 document is always allowed
     --show N    also list the first N changed or dropped doc_ids (ids only, never text)
     --timeout   seconds allowed for one rule call on one document (default 5)
 
@@ -36,9 +36,12 @@ doc_id, text, url and lang_label (url and lang_label are read when the pack has 
 
 A document is "changed" when the rule returns text that differs from the input (compared byte for byte, no
 normalisation). It is "dropped" when the rule returns the action "drop". Each document counts once.
-PASS requires no errors and (changed + dropped) at most --limit percent of the gold documents.
+PASS requires no errors and (changed + dropped) at most max(1, floor(--limit percent of n)) documents, where n is
+the number of rows in the gold set of the rule's own pack (TSAI decision for small gold sets). With the default 1%
+this is 1 document for every gold set under 200 rows, 2 for 200 to 299 rows, and so on. An empty gold set is
+reported as "result: NOT TESTABLE" with exit code 2.
 
-Exit code: 0 = PASS, 1 = FAIL, 2 = the test could not be run (bad input, or the rule raised an error).
+Exit code: 0 = PASS, 1 = FAIL, 2 = the test could not be run (bad input, empty gold set, or the rule raised an error).
 
 The rules file is run as code: read it before you run it. A per-document timeout stops runaway regexes. On Linux and
 macOS it uses SIGALRM: the document is reported as an error and the test goes on. Windows has no SIGALRM, so there
@@ -94,6 +97,10 @@ def debug(message: str):
 
 class Fatal(Exception):
     """The test cannot be run. The message is printed and the exit code is 2."""
+
+
+class NotTestable(Fatal):
+    """The gold set is empty, so the pack cannot be tested. Reported as "result: NOT TESTABLE", exit code 2."""
 
 
 class RuleTimeout(Exception):
@@ -375,7 +382,7 @@ def read_gold(path: Path):
     except (OSError, UnicodeError, csv.Error) as exc:
         raise Fatal(f'cannot read gold file {path}: {exc}') from exc
     if not ids:
-        raise Fatal(f'{path.name}: gold set is empty')
+        raise NotTestable(f'{path.name}: the gold set is empty')
     return ids
 
 def read_pack_docs(path: Path, ids):
@@ -427,11 +434,27 @@ def takes_doc(rule) -> bool:
     return bool(params) and params[0] == "doc"
 
 
+def allowed_documents(n: int, limit: Fraction) -> int:
+    """How many of the n gold documents a rule may change or drop: max(1, floor(limit% of n)).
+
+    TSAI decision for small gold sets: at 1% a set under 100 rows would allow no change at all, so at least one
+    document is always allowed. With the default 1% the limit is 1 document for every gold set under 200 rows.
+    """
+    return max(1, math.floor(limit * n / 100))
+
+
 def harm_percent(changed: int, dropped: int, n: int, limit: Fraction):
+    """Return (percent of the gold set changed or dropped, passed). The one place the limit is applied."""
     if n <= 0:
-        raise Fatal('cannot calculate harm against an empty gold set')
+        raise NotTestable('the gold set is empty')
     percent = Fraction((changed + dropped) * 100, n)
-    return percent, percent <= limit
+    return percent, changed + dropped <= allowed_documents(n, limit)
+
+def limit_line(n: int, limit: Fraction, shown: str) -> str:
+    allowed = allowed_documents(n, limit)
+    return (f"limit: {allowed} document{'s' if allowed != 1 else ''} changed or dropped "
+            f"(max(1, {shown}% of {n}))")
+
 
 def _replacement(text, out):
     return out if isinstance(out, str) else out[1]
@@ -557,7 +580,8 @@ def _write_report(args, rules_path, digest, count, limit, status, results):
               "gold": args.gold.name, "gold_sha256": sha256_file(args.gold),
               "gold_count": count, "rules": repo_relative(rules_path),
               "rules_file_sha256": sha256_file(rules_path), "code_sha256": digest,
-              "limit_percent": str(limit), "status": status, "results": results}
+              "limit_percent": str(limit), "limit_documents": allowed_documents(count, limit),
+              "status": status, "results": results}
     args.report.parent.mkdir(parents=True, exist_ok=True)
     medicine_extract.write_text_lf(args.report, json.dumps(report, indent=2) + "\n")
 
@@ -576,6 +600,7 @@ def main_all(args, limit) -> int:
     n = len(texts)
     print(f"pack: {args.pack.name}   gold: {args.gold.name} ({n} documents)   rules: {len(rules)}")
     print(f"rules file: {args.rules.name}   code sha256: {digest}")
+    print(limit_line(n, limit, args.limit))
     print(f"{'rule':<18}{'changed':>8}{'dropped':>8}{'percent':>9}  result")
     worst = 0
     results = []
@@ -606,7 +631,8 @@ def main(argv=None) -> int:
     ap.add_argument("--rule", required=True,
                     help="rule ID such as DA-B3-001, a disease code such as B3, or all (every rule in --rules)")
     ap.add_argument("--registry", type=Path, default=DEFAULT_REGISTRY)
-    ap.add_argument("--limit", default="1", help="failing limit in percent of the gold set (default 1)")
+    ap.add_argument("--limit", default="1",
+                    help="failing limit in percent of the gold set (default 1); at least 1 document is always allowed")
     ap.add_argument("--show", type=int, default=0, metavar="N", help="list the first N affected doc_ids")
     ap.add_argument("--timeout", type=float, default=5.0, help="seconds per document (default 5)")
     ap.add_argument("--report", type=Path, help="write reproducible JSON, IDs only")
@@ -658,7 +684,8 @@ def main(argv=None) -> int:
         print(f"rules file: {rules_path.name}   code sha256: {digest}")
         print(f"documents changed: {len(changed)}")
         print(f"documents dropped: {len(dropped)}")
-        print(f"percent: {float(result['percent']):.2f}% of the gold set (limit {args.limit}%)")
+        print(f"percent: {float(result['percent']):.2f}% of the gold set")
+        print(limit_line(n, limit, args.limit))
         if args.show:
             print("  affected doc_ids: " + ", ".join(result["affected_ids"][:args.show]))
         if errors:
@@ -667,6 +694,9 @@ def main(argv=None) -> int:
         debug_not_passing(code, detail or {})
         _write_report(args, rules_path, digest, n, limit, result["result"], [result])
         return {"PASS": 0, "FAIL": 1, "ERROR": 2}[result["result"]]
+    except NotTestable as e:
+        print(f"result: NOT TESTABLE ({e})")
+        return 2
     except (Fatal, OSError) as e:
         print(f"error: {e}", file=sys.stderr)
         return 2

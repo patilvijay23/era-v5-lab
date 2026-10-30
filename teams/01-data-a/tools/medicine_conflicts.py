@@ -299,8 +299,9 @@ def check_pack(pack: str, sheets: dict, registry: list, registry_dir: Path, gold
         flags.append(("NO RULE", f"{code}: found more than {MIN_CASES} times "
                                  f"({', '.join(str(r['count']) for r in rows if r['code'] == code and r['count'])}) "
                                  "and no rule that can run"))
-    if gold["n"] is not None and gold["n"] < 100:
-        flags.append(("SMALL GOLD SET", f"{gold['n']} documents: 1% allows 0, so one touched document fails a rule"))
+    if gold["n"] is not None and gold["n"] < 200:
+        flags.append(("SMALL GOLD SET", f"{gold['n']} documents: the limit is 1 document (max(1, 1%)), "
+                                        "so a second touched document fails a rule"))
 
     clashes = []
     for code in sorted({r["code"] for r in rows}):

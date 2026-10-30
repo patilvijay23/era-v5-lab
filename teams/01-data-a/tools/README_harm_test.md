@@ -2,7 +2,7 @@
 
 ## For annotators: test your own medicine.md
 
-Before you commit your `medicine.md`, check that each rule changes at most 1% of the clean (gold) documents of your pack.
+Before you commit your `medicine.md`, check that each rule changes at most 1% of the clean (gold) documents of your pack, and never less than 1 document: the limit is `max(1, floor(0.01 × n))` documents, where n is the number of rows in your pack's gold set. For every gold set under 200 rows this is 1 document.
 
 **You need**
 - Your pack's Parquet file (the one you annotated) and its gold file, `teams/01-data-a/gold/<pack_id>_gold.csv` (ask the Data A team if it is not there yet).
@@ -22,9 +22,9 @@ python -I teams/01-data-a/tools/harm_test.py \
 Use `--rule all` to test every section of your file, and then all of them together in file order. You do not need a rule ID.
 
 **Read the result**
-- `documents changed` and `documents dropped`: how many gold documents your rule touched. Together they must be 1% or less of the gold set. The last line is `result: PASS` or `result: FAIL`.
+- `documents changed` and `documents dropped`: how many gold documents your rule touched. Together they must be at most the number on the `limit:` line, `max(1, floor(1% of the gold set))`. The last line is `result: PASS` or `result: FAIL`. If your pack's gold set is empty, the last line is `result: NOT TESTABLE` and the rule cannot be tested yet.
 - If it fails, add `--show 10` to list the first 10 `doc_id`s, or `--debug` to list every document that was changed, dropped or crashed, with the length and the first offset that differs. Your fix then needs to leave those documents alone. Text is never printed.
-- Exit code: 0 PASS, 1 FAIL, 2 the test could not run (the message says why).
+- Exit code: 0 PASS, 1 FAIL, 2 the test could not run, or the gold set is empty (the message says why).
 
 **Your `medicine.md` must have**
 - One `**Disease:** <code>` section for each disease code.
@@ -58,7 +58,7 @@ Run them in this order. Steps 2 and 3 can use the rules and IDs that step 1 make
 |---|---|---|---|
 | 0 | `fetch_medicines.py` | the `medicine.md` files in your checkout, and in the open PRs | the files in `teams/01-data-a/medicines/submissions/<pack_id>/<handle>/` |
 | 1 | `medicine_extract.py` | one `medicine.md`, or a directory (eg submissions dir) | the rules as a Python file, and a rule ID for each rule |
-| 2 | `harm_test.py` | one pack, one gold file, one rule ID | documents changed, documents dropped, the percent, PASS or FAIL at 1% |
+| 2 | `harm_test.py` | one pack, one gold file, one rule ID | documents changed, documents dropped, the percent, PASS or FAIL at max(1, 1%) documents |
 | 3 | `rule_report.py` | one pack, its gold file, all its rules | `REPORT.md`: harm test of every rule for the pack, and advice on which rules to keep |
 | 4 | `run_harm_suite.py` (Week 2) | draft Spec v1, registry, G1 pack list, original Parquet files, refreshed gold CSVs | per-rule JSON evidence, per-pack coverage/status summary, run metadata |
 | any time | `medicine_conflicts.py` (Week 2) | the medicine sheets, the gold files, the registry | `MEDICINE_CHECK.md`: which gold files lack medicines, and which medicines clash. Nothing is run |
@@ -134,7 +134,17 @@ The extractor finds the function for a code in this order: a function named `med
 python -I teams/01-data-a/tools/harm_test.py --pack <pack.parquet> --gold <pack_gold.csv> --rule DA-B3-001
 ```
 
-Runs one rule on the gold set. Prints documents changed, documents dropped, the percent, and PASS or FAIL (changed + dropped must be 1% or less of the gold set). The exit code is 0 for PASS, 1 for FAIL and 2 for invalid inputs or rule errors.
+Runs one rule on the gold set. Prints documents changed, documents dropped, the percent, the limit, and PASS or FAIL. The exit code is 0 for PASS, 1 for FAIL and 2 for invalid inputs, rule errors or an empty gold set.
+
+**The limit (TSAI decision for small gold sets).** Each rule is checked against the gold set of its own pack; there is no vote or pooling across packs. A rule passes if changed + dropped is at most
+
+```
+max(1, floor(0.01 × n))   documents, where n is the number of rows in that pack's gold set
+```
+
+At a plain 1%, a gold set under 100 rows (en-nemotroncc 34, math-finemath 30, sci-finepdfs 26, ...) would allow no change at all, so at least 1 document is always allowed until the gold sets grow. For every gold set under 200 rows the limit is 1 document; at 200 to 299 rows it is 2, and so on. `--limit` changes the percent in the same formula: `max(1, floor(limit/100 × n))`. The output shows it, for example `limit: 1 document changed or dropped (max(1, 1% of 34))`, and the `--report` JSON records it as `limit_documents`.
+
+**Empty gold set.** If the gold set has no rows (for example math-megamath), the pack is not testable: the last line is `result: NOT TESTABLE (<file>: the gold set is empty)` and the exit code is 2.
 
 **Where the cleaning code comes from.** `harm_test.py` is a **test runner**, not a collection of hardcoded cleaning rules. It loads executable Python supplied by annotators in one of two ways:
 
@@ -150,7 +160,7 @@ Runs one rule on the gold set. Prints documents changed, documents dropped, the 
 | `--rule <id or code>` | a rule ID such as `DA-B3-001`, or a disease code such as `B3` (required) |
 | `--rules <file>` | a rules `.py` or a `medicine.md`. Not needed for a rule ID |
 | `--registry <file>` | where to look up a rule ID. Default: `rules/registry.json` |
-| `--limit <percent>` | the failing limit, as a percent of the gold set. Default `1` |
+| `--limit <percent>` | the failing limit, as a percent of the gold set. Default `1`. At least 1 document is always allowed: `max(1, floor(limit/100 × n))` |
 | `--show <N>` | also list the first N `doc_id`s that were changed or dropped. Default `0` |
 | `--debug` | print on stderr what the test does (gold and pack sizes, the rules file, the function chosen for each section) and one line for each gold document that was changed, dropped or crashed: its `doc_id`, the kind of change, the lengths and the first offset that differs. Never the text |
 | `--timeout <seconds>` | the time allowed for one document. Default `5` |
@@ -191,7 +201,7 @@ The advice is for a person to check. Nothing records the decision yet.
 | `--pack-id <id>` | the pack ID, for example `code-rust` (required). Its rules come from the registry |
 | `--pack-file <file>` | the pack Parquet file (required) |
 | `--gold <file>` | the gold CSV of that pack |
-| `--limit <percent>` | the failing limit, as a percent of the gold set. Default `1` |
+| `--limit <percent>` | the failing limit, as a percent of the gold set. Default `1`. At least 1 document is always allowed: `max(1, floor(limit/100 × n))` |
 | `--registry <file>` | the registry to read. Default: `rules/registry.json` |
 | `--submissions <folder>` | where the `labels.csv` files are. Default: `diagnosis/submissions` |
 | `--out <file>` | where to write the report. Default: `rules/<pack_id>/REPORT.md` |
@@ -220,7 +230,7 @@ For each gold file it flags:
 | `CANNOT RUN` | a rule needs names that its code never defines: it fails with `NameError` |
 | `NO RULE` | a code that a sheet says was found more than five times has no rule that can run |
 | `BLANK SHEET` | an annotator's sheet is the blank template, while other medicines cover the pack |
-| `SMALL GOLD SET` | fewer than 100 gold documents: 1% allows 0, so one touched document fails a rule |
+| `SMALL GOLD SET` | fewer than 200 gold documents: the limit is 1 document (`max(1, floor(1% of n))`), so a second touched document fails a rule |
 
 For each code with two or more medicines in one pack: `ACTIONS DIFFER` (they disagree on fix, drop or keep), `RULE VS HAND` (one annotator wrote a rule, another edits named rows by hand) and `CHOOSE` (two or more rules can run: `rule_report.py` says which to keep). The medicines of each such code are listed side by side, because a clash in what they do (cut a cut-off text, or join it to the next chunk) cannot be found by a program: a person compares them.
 
@@ -263,7 +273,7 @@ uv run python teams/01-data-a/tools/run_harm_suite.py \
 | `--spec <file>` | draft parent specification; default `teams/01-data-a/spec/spec_v1.md` |
 | `--registry <file>` | executable rule-ID registry; default `teams/01-data-a/rules/registry.json` |
 | `--pack-ids <file>` | core G1 pack list; default `teams/01-data-a/gold/g1_pack_ids.txt` |
-| `--limit <percent>` | maximum individual-rule harm percentage; default `1` |
+| `--limit <percent>` | maximum individual-rule harm percentage; default `1`. Passed to `harm_test.py`, so at least 1 document is always allowed |
 | `--timeout <seconds>` | time limit for each rule/document call; default `5` |
 | `--dry-run` | show coverage and statuses without running any medicine code |
 
@@ -320,6 +330,6 @@ The generated `spec_v1.md` is a **draft**: reviewers must resolve clashes and ve
 - The tools **run the annotators' code** (`harm_test.py`, `rule_report.py`). Read it first.
 - Gold files go in `teams/01-data-a/gold/<pack_id>_gold.csv`: `doc_id`, `reader_1`, `reader_2` (no raw text). A `_DUMMY` gold file is for testing.
 - The pack Parquet files are not in the repo.
-- **Regression-test code is different from medicine code:** `test_harm_test.py` and `test_medicine_extract.py` create small synthetic rules, mock/test Parquet rows, and gold CSV fixtures to check the **harness**. Their pytest PASS results do **not** establish that annotators' real cleaning rules pass the 1% harm test. For real harm results, run `harm_test.py` with the relevant medicine/registered rule, original pack Parquet, and refreshed official gold CSV.
+- **Regression-test code is different from medicine code:** `test_harm_test.py` and `test_medicine_extract.py` create small synthetic rules, mock/test Parquet rows, and gold CSV fixtures to check the **harness**. Their pytest PASS results do **not** establish that annotators' real cleaning rules pass the harm test (`max(1, floor(1% of n))` documents). For real harm results, run `harm_test.py` with the relevant medicine/registered rule, original pack Parquet, and refreshed official gold CSV.
 - Tests are in `teams/01-data-a/tests/`. Run one with `python -I teams/01-data-a/tests/test_harm_test.py` (and `test_medicine_extract.py`, `test_rule_report.py`, `test_fetch_medicines.py`, `test_registry_view.py`). `test_run_harm_suite.py` needs pytest.
 - `registry.json` is shared. Decide who runs the extractor and commits it, to avoid merge conflicts.

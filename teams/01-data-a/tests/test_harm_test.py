@@ -1,6 +1,7 @@
 """Tests for harm_test.py. Run: python -I teams/01-data-a/tests/test_harm_test.py."""
 import contextlib
 import io
+import json
 import subprocess
 import sys
 import tempfile
@@ -13,6 +14,8 @@ import pyarrow.parquet as pq
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))  # python -I: not on the path by itself
 import harm_test  # noqa: E402
+
+MARKER_RULE = "def cure_b3(t):\n    return t.replace('<issue_start>', '[issue_start]')\n"  # changes d000 and d001
 
 
 class HarmTestCase(unittest.TestCase):
@@ -54,6 +57,46 @@ class HarmTestCase(unittest.TestCase):
         self.assertIn("documents changed: 2", out)
         self.assertIn("documents dropped: 1", out)
         self.assertIn("result: FAIL", out)
+
+    def test_small_gold_set_allows_one_document(self):
+        # TSAI decision: the limit is max(1, floor(1% of n)) documents, so 1 of 34 (2.94%) passes
+        self.write_gold(list(self.texts)[1:35])               # d001..d034: the rule changes d001 only
+        rc, out, _ = self.run_ht(MARKER_RULE, "B3")
+        self.assertEqual(rc, 0)
+        self.assertIn("documents changed: 1", out)
+        self.assertIn("limit: 1 document changed or dropped (max(1, 1% of 34))", out)
+        self.assertIn("result: PASS", out)
+
+    def test_small_gold_set_fails_at_two_documents(self):
+        self.write_gold(list(self.texts)[:34])                # d000..d033: the rule changes d000 and d001
+        rc, out, _ = self.run_ht(MARKER_RULE, "B3")
+        self.assertEqual(rc, 1)
+        self.assertIn("documents changed: 2", out)
+        self.assertIn("result: FAIL", out)
+
+    def test_the_limit_is_one_document_up_to_199_rows(self):
+        self.write_gold(list(self.texts)[1:200])              # 199 rows, d001 changed: floor(1.99) = 1 allowed
+        rc, out, _ = self.run_ht(MARKER_RULE, "B3")
+        self.assertEqual(rc, 0)
+        self.assertIn("limit: 1 document changed or dropped (max(1, 1% of 199))", out)
+        self.write_gold(list(self.texts)[:199])               # 199 rows, d000 and d001 changed
+        rc, out, _ = self.run_ht(MARKER_RULE, "B3")
+        self.assertEqual(rc, 1)
+        self.assertIn("result: FAIL", out)
+
+    def test_an_empty_gold_set_is_not_testable(self):
+        self.write_gold([])
+        for src, code in ((MARKER_RULE, "B3"), ("RULES = {'B3': lambda t: t}\n", "all")):
+            rc, out, _ = self.run_ht(src, code)
+            self.assertEqual(rc, 2)
+            self.assertIn("result: NOT TESTABLE (gold.csv: the gold set is empty)", out)
+            self.assertNotIn("documents changed", out)
+
+    def test_the_report_records_the_limit_in_documents(self):
+        self.write_gold(list(self.texts)[1:35])
+        rc, _, _ = self.run_ht(MARKER_RULE, "B3", "rules.py", "--report", str(self.tmp / "report.json"))
+        report = json.loads((self.tmp / "report.json").read_text())
+        self.assertEqual((rc, report["status"], report["gold_count"], report["limit_documents"]), (0, "PASS", 34, 1))
 
     def test_debug_lists_the_documents_that_did_not_pass_without_their_text(self):
         src = ("RULES = {'X': lambda t: ('drop', '') if t == 'DROPME' else "
