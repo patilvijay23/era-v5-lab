@@ -502,6 +502,37 @@ class DirCase(unittest.TestCase):
         self.assertFalse(any(e["withdrawn"] for e in self.entries().values()))
         self.assertTrue((self.tmp / "rules" / "en-dclm" / "carol.py").exists())
 
+    def test_the_run_summary_lists_new_withdrawn_reinstated_and_changed_rules(self):
+        self.medicine("code-rust", "alice", self.b3())
+        self.medicine("code-rust", "bob", self.b3())
+        self.medicine("en-dclm", "carol", self.b3())
+        _, out, _ = self.run_dir()
+        self.assertIn("Registry changes: 3 new", out)
+        self.assertIn("new: DA-B3-001 (code-rust/alice), DA-B3-002 (code-rust/bob), DA-B3-003 (en-dclm/carol)", out)
+        _, out, _ = self.run_dir()
+        self.assertIn("Registry changes: none", out)
+        (self.src / "code-rust" / "bob" / "medicine.md").unlink()                  # bob is gone
+        self.medicine("code-rust", "alice", self.b3("t.strip()"))                  # alice's code changes
+        _, out, _ = self.run_dir()
+        self.assertIn("Registry changes: 1 withdrawn, 1 changed", out)
+        self.assertIn("withdrawn: DA-B3-002 (code-rust/bob)", out)
+        self.assertIn("changed: DA-B3-001 (code-rust/alice)", out)
+        self.medicine("code-rust", "bob", self.b3())                               # bob comes back
+        _, out, _ = self.run_dir()
+        self.assertIn("Registry changes: 1 reinstated", out)
+        self.assertIn("reinstated: DA-B3-002 (code-rust/bob)", out)
+
+    def test_a_registry_from_before_code_sha256_is_filled_in_without_a_change_report(self):
+        self.medicine("code-rust", "alice", self.b3())
+        self.run_dir()
+        data = json.loads(self.registry.read_text())
+        for e in data["rules"]:
+            del e["code_sha256"]
+        self.registry.write_text(json.dumps(data))
+        _, out, _ = self.run_dir()
+        self.assertIn("Registry changes: none", out)
+        self.assertIn("code_sha256", self.registry.read_text())
+
     def test_the_last_medicine_of_a_pack_withdraws_its_rules(self):
         self.medicine("code-rust", "alice", self.b3())
         self.medicine("en-dclm", "carol", self.b3())
