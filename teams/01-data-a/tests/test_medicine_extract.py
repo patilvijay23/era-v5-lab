@@ -502,6 +502,27 @@ class DirCase(unittest.TestCase):
         self.assertFalse(any(e["withdrawn"] for e in self.entries().values()))
         self.assertTrue((self.tmp / "rules" / "en-dclm" / "carol.py").exists())
 
+    def test_the_last_medicine_of_a_pack_withdraws_its_rules(self):
+        self.medicine("code-rust", "alice", self.b3())
+        self.medicine("en-dclm", "carol", self.b3())
+        self.run_dir()
+        (self.src / "code-rust" / "alice" / "medicine.md").unlink()                # alice was the only one in code-rust
+        (self.src / "code-rust" / "alice").rmdir()                                  # the pack folder stays, empty
+        rc, out, _ = self.run_dir()
+        self.assertEqual(rc, 0)
+        self.assertTrue(self.entries()["DA-B3-001"]["withdrawn"])                  # code-rust / alice
+        self.assertFalse((self.tmp / "rules" / "code-rust" / "alice.py").exists())
+        self.assertTrue((self.tmp / "rules" / "en-dclm" / "carol.py").exists())
+        self.assertIn("medicine.md gone, rules withdrawn: code-rust/alice", out)
+
+    def test_only_empty_pack_folders_and_nothing_to_withdraw_is_still_an_error(self):
+        (self.src / "code-rust").mkdir(parents=True)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertEqual(medicine_extract.main(["--dir", str(self.src), "--registry", str(self.registry)]), 1)
+        self.assertFalse(self.registry.exists())
+        self.assertIn("no <pack_id>/<handle>/medicine.md under", err.getvalue())
+
     def test_arguments(self):
         err = io.StringIO()
         with contextlib.redirect_stderr(err):

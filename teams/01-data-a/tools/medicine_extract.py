@@ -354,12 +354,13 @@ def remove_generated(out: Path):
         print(f"warning: cannot remove the old rules file {out}: {e.strerror or e}", file=sys.stderr)
 
 
-def withdraw_missing(entries, seen, base: Path):
+def withdraw_missing(entries, seen, base: Path, pack_dirs=()):
     """--dir: withdraw the rules of a (pack, handle) whose medicine.md is not in the folder any more.
 
-    Only packs that have at least one medicine.md in this run are checked, so a folder that holds one pack
-    (a fetch with --pack-id) never withdraws the rules of the other packs. Returns {(pack, handle): [IDs]}."""
-    packs = {pack for pack, _ in seen}
+    Only packs that are in this run are checked: a pack with at least one medicine.md, or a pack folder in `pack_dirs`
+    (it may be empty: its last medicine.md was deleted). So a folder that holds one pack (a fetch with --pack-id)
+    never withdraws the rules of the other packs. Returns {(pack, handle): [IDs]}."""
+    packs = {pack for pack, _ in seen} | set(pack_dirs)
     gone = {}
     for e in entries:
         key = (e["pack"], e["handle"])
@@ -480,7 +481,8 @@ def main(argv=None) -> int:
         print(f"error: {args.dir} is not a folder", file=sys.stderr)
         return 2
     files = sorted(args.dir.glob("*/*/medicine.md"))
-    if not files:
+    pack_dirs = {d.name for d in args.dir.iterdir() if d.is_dir()}   # an empty pack folder still counts as in this run
+    if not files and not pack_dirs:
         print(f"error: no <pack_id>/<handle>/medicine.md under {args.dir}", file=sys.stderr)
         return 1
     entries = load_registry(args.registry)
@@ -489,7 +491,10 @@ def main(argv=None) -> int:
         pack, handle = path.parent.parent.name, path.parent.name
         print(f"\n== {pack}/{handle} ==")
         status[(pack, handle)] = extract_one(path, (pack, handle), rules_path(pack, handle, args.registry.parent), entries, args.registry, clashed)
-    gone = withdraw_missing(entries, set(status), args.registry.parent)
+    gone = withdraw_missing(entries, set(status), args.registry.parent, pack_dirs)
+    if not files and not gone:
+        print(f"error: no <pack_id>/<handle>/medicine.md under {args.dir}", file=sys.stderr)
+        return 1
     save_registry(args.registry, entries)
     failed = [k for k, rc in status.items() if rc]
     print(f"\n{len(status) - len(failed)} of {len(status)} medicine.md files done. Registry: {args.registry}")
