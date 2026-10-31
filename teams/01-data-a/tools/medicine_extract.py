@@ -410,14 +410,24 @@ def registry_changes(before, after) -> dict:
 
 
 def print_changes(before, after):
+    """The run summary: for each kind, one line per pack/handle with its rule IDs."""
     found = registry_changes(before, after)
+    rule = "=" * 78
+    counts = ", ".join(f"{len(v)} {k}" for k, v in found.items() if v) or "none"
+    print(f"\n{rule}\nREGISTRY CHANGES: {counts}\n{rule}")
     if not any(found.values()):
-        print("\nRegistry changes: none")
         return
-    print("\nRegistry changes: " + ", ".join(f"{len(v)} {k}" for k, v in found.items() if v))
     for kind, entries in found.items():
-        if entries:
-            print(f"  {kind}: " + ", ".join(f"{e['id']} ({e['pack']}/{e['handle']})" for e in entries))
+        if not entries:
+            continue
+        by_handle = {}
+        for e in entries:
+            by_handle.setdefault(f"{e['pack']}/{e['handle']}", []).append(e["id"])
+        width = max(map(len, by_handle))
+        print(f"\n{kind} ({len(entries)})")
+        for who, ids in sorted(by_handle.items()):
+            print(textwrap.fill(", ".join(ids), width=100, initial_indent=f"  {who:<{width}}  ",
+                                subsequent_indent=" " * (width + 4)))
 
 
 def extract_one(medicine: Path, found, out: Path, entries, registry: Path, clashed=None) -> int:
