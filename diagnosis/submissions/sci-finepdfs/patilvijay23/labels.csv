@@ -99,3 +99,103 @@ d0a0a41263e845f5,full,clean,,,,Nutrition science textbook excerpt; coherent tech
 9397bad7ea9147ce,full,clean,,,,Market news article; coherent report.
 650e04c676aed57f,full,clean,,,,Multi-article newspaper with business advertisements; public business phone numbers and section titles are not F1/C2.
 ee1386df10972650,full,clean,,,,College trustee minutes contain public officials and meeting votes; names alone are not personal-data F1.
+4c82c6872af686a7,full,clean,,,,full-text scan and structural check found no confirmed disease.
+dc0ea5f742dac85d,full,clean,,,,full-text scan and structural check found no confirmed disease.
+367496bb70a5a703,full,clean,,,,full-text scan and structural check found no confirmed disease.
+0a1ae0340b12e233,full,clean,,,,full-text scan and structural check found no confirmed disease.
+0e1f804b58f3527e,full,fix,C3,"C3: document starts mid-word at offset 0 (""fold."")",,Beginning is visibly clipped; seek the original opening or preserve the coherent remainder only after source check.
+b8190ea2548dbc2d,full,clean,,,,full-text scan and structural check found no confirmed disease.
+683374696c56b33d,full,clean,,,,full-text scan and structural check found no confirmed disease.
+c8e7a20018de961a,full,clean,,,,full-text scan and structural check found no confirmed disease.
+32fbaa355f456fb7,full,clean,,,,full-text scan and structural check found no confirmed disease.
+69bbb9c2f59d250d,full,clean,,,,full-text scan and structural check found no confirmed disease.
+d5b7d36ce46b1a18,full,clean,,,,full-text scan and structural check found no confirmed disease.
+b8674e468f26811f,full,clean,,,,full-text scan and structural check found no confirmed disease.
+44d0baa3508e89bc,full,drop,C5,"C5: PDF-download bait begins near offset 1464 (""READ ONLINE"")",,"Sales listing, generic fabricated-looking reviews and download lure rather than actual counselling textbook."
+8120291e5fc5a783,full,clean,,,,full-text scan and structural check found no confirmed disease.
+a93f02cb2efe3f4d,full,clean,,,,full-text scan and structural check found no confirmed disease.
+a66832a53e9d7d5a,full,clean,,,,full-text scan and structural check found no confirmed disease.
+9dff1aec636d9ee4,full,clean,,,,full-text scan and structural check found no confirmed disease.
+7f29065d7b40ffa9,full,clean,,,,full-text scan and structural check found no confirmed disease.
+b86ffe58776596ec,full,clean,,,,full-text scan and structural check found no confirmed disease.
+c7e98d3007819bf4,full,clean,,,,full-text scan and structural check found no confirmed disease.
+c25acba6d51c77bd,full,clean,,,,full-text scan and structural check found no confirmed disease.
+dc5add2b37a1c6db,full,clean,,,,full-text scan and structural check found no confirmed disease.
+c526df12bba206ca,full,clean,,,,full-text scan and structural check found no confirmed disease.
+861316abeb0a1bd6,full,clean,,,,"Minutes of multiple meetings appear in a chronological board archive; legitimate collected records, not automatically C4."
+16d7a196f279ba71,full,clean,,,,full-text scan and structural check found no confirmed disease.
+03e5c60403a61025,full,clean,,,,full-text scan and structural check found no confirmed disease.
+4f681b13a62c18f8,full,drop,C5,C5: unrelated Kindle book listings start near offset 1577,,SEO-like scraped book-sales listing; contains unrelated book ads and generic reviews rather than the book.
+90db57efa148fd84,full,clean,,,,full-text scan and structural check found no confirmed disease.
+d59e857a256fa892,full,clean,,,,full-text scan and structural check found no confirmed disease.
+1a91118622793fc1,full,clean,,,,full-text scan and structural check found no confirmed disease.
+08bcc42eafca5836,full,clean,,,,full-text scan and structural check found no confirmed disease.
+6ed3e5006d07d363,full,clean,,,,full-text scan and structural check found no confirmed disease.
+ca6b59cabbb34b02,full,clean,,,,full-text scan and structural check found no confirmed disease.
+e78baa816caee223,full,clean,,,,full-text scan and structural check found no confirmed disease.
+6af2bcb11b896884,full,fix,C4,C4: image-inpainting explanation abruptly changes to unrelated gesture essay at offset 1526,,Two unrelated texts joined; split at verified boundary and retain source provenance.
+b2e1c4904816169a,full,clean,,,,full-text scan and structural check found no confirmed disease.
+f6aeca3b71fab18f,full,clean,,,,full-text scan and structural check found no confirmed disease.
+feb88c9786358d9f,full,clean,,,,full-text scan and structural check found no confirmed disease.
+a7d4b3e21dc2303a,full,clean,,,,full-text scan and structural check found no confirmed disease.
+575a889f11ff3dca,full,clean,,,,full-text scan and structural check found no confirmed disease.
+ec1a854ffbf88674,full,clean,,,,full-text scan and structural check found no confirmed disease.
+3f26b37757597c50,full,clean,,,,full-text scan and structural check found no confirmed disease.
+d1ef62be07a9b627,full,clean,,,,full-text scan and structural check found no confirmed disease.
+08037ebf540d8777,full,clean,,,,full-text scan and structural check found no confirmed disease.
+eb7afffa5b6bb972,full,clean,,,,full-text scan and structural check found no confirmed disease.
+75d7c784945e31db,full,clean,,,,full-text scan and structural check found no confirmed disease.
+794c9a9b22c801a7,full,clean,,,,full-text scan and structural check found no confirmed disease.
+703403786ac525a7,full,clean,,,,full-text scan and structural check found no confirmed disease.
+cdd5cf3aa76e9128,full,clean,,,,full-text scan and structural check found no confirmed disease.
+eb448d7cac3f34ec,full,clean,,,,full-text scan and structural check found no confirmed disease.
+214aed23029bb495,full,clean,,,,full-text scan and structural check found no confirmed disease.
+e2416aa7270fa3a5,full,clean,,,,full-text scan and structural check found no confirmed disease.
+e44bce2ae1165559,full,clean,,,,full-text scan and structural check found no confirmed disease.
+7a7b33e8ba779ca3,full,clean,,,,full-text scan and structural check found no confirmed disease.
+4d3572485cb6e0c8,full,clean,,,,full-text scan and structural check found no confirmed disease.
+a0e56f3bbadf72f1,full,clean,,,,full-text scan and structural check found no confirmed disease.
+ff7eab131f21563e,full,clean,,,,full-text scan and structural check found no confirmed disease.
+02797f751889552e,full,clean,,,,full-text scan and structural check found no confirmed disease.
+869519337d0dee8b,full,clean,,,,full-text scan and structural check found no confirmed disease.
+baabcea04dda3f04,full,clean,,,,full-text scan and structural check found no confirmed disease.
+00a03d6c741c45ef,full,clean,,,,full-text scan and structural check found no confirmed disease.
+58153830618a6d38,full,clean,,,,full-text scan and structural check found no confirmed disease.
+957accc597585af1,full,clean,,,,full-text scan and structural check found no confirmed disease.
+e8f42c7d88fb075f,full,clean,,,,full-text scan and structural check found no confirmed disease.
+dd1c0d95aac65a54,full,clean,,,,full-text scan and structural check found no confirmed disease.
+19c895320632e7b0,full,clean,,,,Mixed Amharic/English prescription forms: English predominates; code-mixing and blank tables are legitimate; no D1.
+12673039c03dfd2b,full,clean,,,,"Repetition is inherent to the score/lyrics, not a C2 extraction duplicate."
+eb09e980b995001d,full,clean,,,,full-text scan and structural check found no confirmed disease.
+ad65ed98bef1fead,full,clean,,,,full-text scan and structural check found no confirmed disease.
+aaccbd8efbe0cba3,full,clean,,,,full-text scan and structural check found no confirmed disease.
+e6f1f62e166ba647,full,fix,C4;F1,C4: finance ledger is joined to legal service records near offset 26934 | F1: possible personally linked residential information in legal filings near offset 27000,,Review and separate independent financial/legal records; use protected workflow to confirm and redact private-person spans. Never publish values.
+ea8a1ef456305448,full,drop,C5,C5: repeated PDF-download and unrelated manual-keyword spam begins at offset 56,,Book-download/search-keyword spam with repeated service-manual titles rather than coherent manual content.
+58da0d7b70942ccc,full,clean,,,,full-text scan and structural check found no confirmed disease.
+844fac2e036426bc,full,clean,,,,full-text scan and structural check found no confirmed disease.
+f540748360db0e03,full,clean,,,,Four school course forms are similar but have different signatories/entries; not an identical-content C2 duplicate. Placeholder contacts are not F1.
+5ec168f3b65c1bc7,full,clean,,,,full-text scan and structural check found no confirmed disease.
+dd64bce4d198e500,full,clean,,,,full-text scan and structural check found no confirmed disease.
+fa1b2ebcf9a820af,full,clean,,,,full-text scan and structural check found no confirmed disease.
+b6fd81dbf90b0d17,full,clean,,,,full-text scan and structural check found no confirmed disease.
+167b77a9ac7f9fa4,full,clean,,,,full-text scan and structural check found no confirmed disease.
+29ada9611915bcc1,full,clean,,,,full-text scan and structural check found no confirmed disease.
+8ac0c2a0cf402113,full,clean,,,,full-text scan and structural check found no confirmed disease.
+60d96de6261ab4b1,full,clean,,,,full-text scan and structural check found no confirmed disease.
+e0a5b6c63539ceed,full,clean,,,,full-text scan and structural check found no confirmed disease.
+0f122c5843e32e0e,full,clean,,,,full-text scan and structural check found no confirmed disease.
+55d8490c04e87cb0,full,clean,,,,full-text scan and structural check found no confirmed disease.
+4d5df8dbf94d1c30,full,clean,,,,full-text scan and structural check found no confirmed disease.
+eb48a030e230b412,full,fix,C1,C1: repository cover and navigation appear near offsets 416 and 711; actual research text follows,,"Remove only verified extraneous repository wrapper; preserve title, author attribution, licence and citations."
+83eddb29978b7979,full,clean,,,,full-text scan and structural check found no confirmed disease.
+23d354ac663e3f15,full,fix,C1,C1: unrelated working-paper catalogue appended near offset 62743,,Remove the extraneous institutional working-paper list after the article references; retain article and citations.
+fa25e84658e23ebe,full,clean,,,,"Repeated blank medical intake fields are intentional form structure, not a duplicate defect or exposed patient data."
+9a24977d0c9a9390,full,clean,,,,full-text scan and structural check found no confirmed disease.
+bfc7b7390d5a1a85,full,clean,,,,full-text scan and structural check found no confirmed disease.
+16ed890959281c1c,full,clean,,,,full-text scan and structural check found no confirmed disease.
+7ba6c2ca43cfb89e,full,clean,,,,"Repeated mathematical identities, fenced notation and closing open-problem prompt are legitimate scientific slides."
+94c8e162acfa103f,full,clean,,,,full-text scan and structural check found no confirmed disease.
+fc92d823500e7369,full,clean,,,,full-text scan and structural check found no confirmed disease.
+b964ca12c26cfb74,full,fix,F1,F1: personally linked contributor street-address fields begin near offset 2323,,Political-finance disclosure contains individual-linked residential data; verify private spans and redact them before training release.
+a55d44a6faca3afe,full,clean,,,,full-text scan and structural check found no confirmed disease.
+32cefd3525658759,full,clean,,,,full-text scan and structural check found no confirmed disease.
