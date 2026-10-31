@@ -119,8 +119,6 @@ def char_repr(ch: str) -> str:
         return r"'\t'"
     if ch == " ":
         return "' '"
-    if unicodedata.category(ch).startswith("C") or ord(ch) in SPECIAL_NAMES:
-        return repr(ch)
     return repr(ch)
 
 
@@ -167,16 +165,28 @@ def _nfc_cluster(text: str, mark_index: int) -> tuple[int, int, str]:
 def nfc_candidates(text: str) -> list[tuple[int, str, str]]:
     """Return source offsets/clusters whose canonical form changes under NFC.
 
-    Also consider standalone code points that NFC decomposes (notably the
-    Devanagari precomposed nukta letters U+0958..U+095F, all combining class 0).
+    Also detect standalone NFC-changing characters (including nukta letters)
+    and adjacent composing code points with combining class 0 (split vowel signs).
     """
     seen = set()
     out = []
     for i, ch in enumerate(text):
+        # Check for a genuine interaction between adjacent code points, not
+        # merely NFC changes that already occur in either character alone.
+        pair_composes = (
+            i > 0
+            and unicodedata.normalize("NFC", text[i - 1:i + 1])
+            != (unicodedata.normalize("NFC", text[i - 1])
+                + unicodedata.normalize("NFC", ch))
+        )
         if (unicodedata.combining(ch) == 0
-                and unicodedata.normalize("NFC", ch) == ch):
+                and unicodedata.normalize("NFC", ch) == ch
+                and not pair_composes):
             continue
         start, end, cluster = _nfc_cluster(text, i)
+        if pair_composes:
+            start = min(start, i - 1)
+            cluster = text[start:end]
         if (start, end) in seen:
             continue
         seen.add((start, end))
