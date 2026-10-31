@@ -98,6 +98,25 @@ class UnicodeViewerTests(unittest.TestCase):
         self.assertEqual(vp.nfc_candidates("x e\u0301!"), [(2, "e\u0301", "é")])
         self.assertEqual(vp.nfc_candidates("कखग"), [])
 
+    def test_nfc_two_part_vowel_signs(self):
+        pairs = (
+            ("\u09c7\u09be", "\u09cb"),  # Bengali
+            ("\u0b47\u0b3e", "\u0b4b"),  # Odia
+            ("\u0bc6\u0bbe", "\u0bca"),  # Tamil
+            ("\u0d46\u0d3e", "\u0d4a"),  # Malayalam
+        )
+        for source, normalized in pairs:
+            with self.subTest(source=source):
+                self.assertEqual([unicodedata.combining(ch) for ch in source], [0, 0])
+                self.assertEqual(vp.nfc_candidates(source), [(0, source, normalized)])
+                self.assertEqual(vp.nfc_candidates("x" + source), [(1, source, normalized)])
+                self.assertEqual(vp.nfc_candidates(normalized), [])
+        report = vp.audit_report("x \u09c7\u09be")
+        self.assertIn("A5/NFC candidates:", report)
+        self.assertIn("2 U+09C7", report)
+        self.assertIn("U+09BE", report)
+        self.assertIn("U+09CB", report)
+
     def test_g1_does_not_treat_avagraha_as_dependent_mark(self):
         self.assertNotIn(0x093D, vp.DEVANAGARI_DEPENDENT_MARKS)
         self.assertEqual(vp.g1_candidates("a\u093d"), [])
