@@ -44,6 +44,7 @@ function in that section, and give it a name that no earlier rule uses.
 """
 import argparse
 import ast
+import copy
 import hashlib
 import json
 import os
@@ -354,12 +355,13 @@ def remove_generated(out: Path):
         print(f"warning: cannot remove the old rules file {out}: {e.strerror or e}", file=sys.stderr)
 
 
-def withdraw_missing(entries, seen, base: Path):
+def withdraw_missing(entries, seen, base: Path, pack_dirs=()):
     """--dir: withdraw the rules of a (pack, handle) whose medicine.md is not in the folder any more.
 
-    Only packs that have at least one medicine.md in this run are checked, so a folder that holds one pack
-    (a fetch with --pack-id) never withdraws the rules of the other packs. Returns {(pack, handle): [IDs]}."""
-    packs = {pack for pack, _ in seen}
+    Only packs that are in this run are checked: a pack with at least one medicine.md, or a pack folder in `pack_dirs`
+    (it may be empty: its last medicine.md was deleted). So a folder that holds one pack (a fetch with --pack-id)
+    never withdraws the rules of the other packs. Returns {(pack, handle): [IDs]}."""
+    packs = {pack for pack, _ in seen} | set(pack_dirs)
     gone = {}
     for e in entries:
         key = (e["pack"], e["handle"])
@@ -386,6 +388,46 @@ def withdraw_stale(found, entries, out: Path):
     if ids:
         print(f"  withdrawn (the medicine.md no longer gives these rules): {', '.join(ids)}")
     return ids
+
+
+def registry_changes(before, after) -> dict:
+    """Compare the registry entries before and after a run. Returns {kind: [entry]} for new, withdrawn, reinstated and
+    changed (an active rule whose code, action or file changed). Done on the two lists, so no path can miss a change.
+    A field the old entry did not have (code_sha256 on a registry from before it was added) is filled in, not changed."""
+    old = {e["id"]: e for e in before}
+    found = {"new": [], "withdrawn": [], "reinstated": [], "changed": []}
+    for e in sorted(after, key=lambda e: e["id"]):
+        o = old.get(e["id"])
+        if o is None:
+            found["new"].append(e)
+        elif e.get("withdrawn") and not o.get("withdrawn"):
+            found["withdrawn"].append(e)
+        elif o.get("withdrawn") and not e.get("withdrawn"):
+            found["reinstated"].append(e)
+        elif not e.get("withdrawn") and any(k in o and e.get(k) != o[k] for k in ("code_sha256", "action", "file")):
+            found["changed"].append(e)
+    return found
+
+
+def print_changes(before, after):
+    """The run summary: for each kind, one line per pack/handle with its rule IDs."""
+    found = registry_changes(before, after)
+    rule = "=" * 78
+    counts = ", ".join(f"{len(v)} {k}" for k, v in found.items() if v) or "none"
+    print(f"\n{rule}\nREGISTRY CHANGES: {counts}\n{rule}")
+    if not any(found.values()):
+        return
+    for kind, entries in found.items():
+        if not entries:
+            continue
+        by_handle = {}
+        for e in entries:
+            by_handle.setdefault(f"{e['pack']}/{e['handle']}", []).append(e["id"])
+        width = max(map(len, by_handle))
+        print(f"\n{kind} ({len(entries)})")
+        for who, ids in sorted(by_handle.items()):
+            print(textwrap.fill(", ".join(ids), width=100, initial_indent=f"  {who:<{width}}  ",
+                                subsequent_indent=" " * (width + 4)))
 
 
 def extract_one(medicine: Path, found, out: Path, entries, registry: Path, clashed=None) -> int:
@@ -470,26 +512,33 @@ def main(argv=None) -> int:
             print("error: this path is not diagnosis/submissions/<pack_id>/<handle>/medicine.md; give --out", file=sys.stderr)
             return 2
         entries = load_registry(args.registry) if found else None
+        before = copy.deepcopy(entries)
         rc = extract_one(args.medicine, found, out, entries, args.registry)
         if rc in (0, 1) and entries is not None:  # 1: no rule now, but stale IDs may have been withdrawn
             save_registry(args.registry, entries)
             print(f"registry: {args.registry}")
+            print_changes(before, entries)
         return rc
 
     if not args.dir.is_dir():
         print(f"error: {args.dir} is not a folder", file=sys.stderr)
         return 2
     files = sorted(args.dir.glob("*/*/medicine.md"))
-    if not files:
+    pack_dirs = {d.name for d in args.dir.iterdir() if d.is_dir()}   # an empty pack folder still counts as in this run
+    if not files and not pack_dirs:
         print(f"error: no <pack_id>/<handle>/medicine.md under {args.dir}", file=sys.stderr)
         return 1
     entries = load_registry(args.registry)
+    before = copy.deepcopy(entries)
     status, clashed = {}, []
     for path in files:
         pack, handle = path.parent.parent.name, path.parent.name
         print(f"\n== {pack}/{handle} ==")
         status[(pack, handle)] = extract_one(path, (pack, handle), rules_path(pack, handle, args.registry.parent), entries, args.registry, clashed)
-    gone = withdraw_missing(entries, set(status), args.registry.parent)
+    gone = withdraw_missing(entries, set(status), args.registry.parent, pack_dirs)
+    if not files and not gone:
+        print(f"error: no <pack_id>/<handle>/medicine.md under {args.dir}", file=sys.stderr)
+        return 1
     save_registry(args.registry, entries)
     failed = [k for k, rc in status.items() if rc]
     print(f"\n{len(status) - len(failed)} of {len(status)} medicine.md files done. Registry: {args.registry}")
@@ -499,6 +548,7 @@ def main(argv=None) -> int:
         print(f"  medicine.md gone, rules withdrawn: {pack}/{handle}")
     for pack, handle in clashed:
         print(f"  same name, different code in two sections (see the warning above): {pack}/{handle}")
+    print_changes(before, entries)
     return 1 if failed else 0
 
 

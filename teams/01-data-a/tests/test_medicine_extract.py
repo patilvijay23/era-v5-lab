@@ -502,6 +502,58 @@ class DirCase(unittest.TestCase):
         self.assertFalse(any(e["withdrawn"] for e in self.entries().values()))
         self.assertTrue((self.tmp / "rules" / "en-dclm" / "carol.py").exists())
 
+    def test_the_run_summary_lists_new_withdrawn_reinstated_and_changed_rules(self):
+        self.medicine("code-rust", "alice", self.b3())
+        self.medicine("code-rust", "bob", self.b3())
+        self.medicine("en-dclm", "carol", self.b3())
+        _, out, _ = self.run_dir()
+        self.assertIn("REGISTRY CHANGES: 3 new", out)
+        self.assertIn("new (3)\n  code-rust/alice  DA-B3-001\n  code-rust/bob    DA-B3-002\n  en-dclm/carol    DA-B3-003\n", out)
+        _, out, _ = self.run_dir()
+        self.assertIn("REGISTRY CHANGES: none", out)
+        (self.src / "code-rust" / "bob" / "medicine.md").unlink()                  # bob is gone
+        self.medicine("code-rust", "alice", self.b3("t.strip()"))                  # alice's code changes
+        _, out, _ = self.run_dir()
+        self.assertIn("REGISTRY CHANGES: 1 withdrawn, 1 changed", out)
+        self.assertIn("withdrawn (1)\n  code-rust/bob  DA-B3-002", out)
+        self.assertIn("changed (1)\n  code-rust/alice  DA-B3-001", out)
+        self.medicine("code-rust", "bob", self.b3())                               # bob comes back
+        _, out, _ = self.run_dir()
+        self.assertIn("REGISTRY CHANGES: 1 reinstated", out)
+        self.assertIn("reinstated (1)\n  code-rust/bob  DA-B3-002", out)
+
+    def test_a_registry_from_before_code_sha256_is_filled_in_without_a_change_report(self):
+        self.medicine("code-rust", "alice", self.b3())
+        self.run_dir()
+        data = json.loads(self.registry.read_text())
+        for e in data["rules"]:
+            del e["code_sha256"]
+        self.registry.write_text(json.dumps(data))
+        _, out, _ = self.run_dir()
+        self.assertIn("REGISTRY CHANGES: none", out)
+        self.assertIn("code_sha256", self.registry.read_text())
+
+    def test_the_last_medicine_of_a_pack_withdraws_its_rules(self):
+        self.medicine("code-rust", "alice", self.b3())
+        self.medicine("en-dclm", "carol", self.b3())
+        self.run_dir()
+        (self.src / "code-rust" / "alice" / "medicine.md").unlink()                # alice was the only one in code-rust
+        (self.src / "code-rust" / "alice").rmdir()                                  # the pack folder stays, empty
+        rc, out, _ = self.run_dir()
+        self.assertEqual(rc, 0)
+        self.assertTrue(self.entries()["DA-B3-001"]["withdrawn"])                  # code-rust / alice
+        self.assertFalse((self.tmp / "rules" / "code-rust" / "alice.py").exists())
+        self.assertTrue((self.tmp / "rules" / "en-dclm" / "carol.py").exists())
+        self.assertIn("medicine.md gone, rules withdrawn: code-rust/alice", out)
+
+    def test_only_empty_pack_folders_and_nothing_to_withdraw_is_still_an_error(self):
+        (self.src / "code-rust").mkdir(parents=True)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertEqual(medicine_extract.main(["--dir", str(self.src), "--registry", str(self.registry)]), 1)
+        self.assertFalse(self.registry.exists())
+        self.assertIn("no <pack_id>/<handle>/medicine.md under", err.getvalue())
+
     def test_arguments(self):
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
