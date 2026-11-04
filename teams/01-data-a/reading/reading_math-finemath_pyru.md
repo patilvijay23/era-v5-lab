@@ -1,4 +1,4 @@
-# Math reading audit (task 8): math-finemath
+# Math reading audit (task 9): math-finemath
 
 Reader: pyru (Data A rotation, week 2). Date: 1 Nov 2026.
 
@@ -7,7 +7,7 @@ Reader: pyru (Data A rotation, week 2). Date: 1 Nov 2026.
 - **Docs:** 100 picked at random (seed 20261101) from the 28,522 docs spec v1 kept out of 29,122 in the tokenizer sample part `train/math-finemath/part-00000.parquet` (sha256 a5dbb4da6d0c2e89).
 - **Cleaner:** spec v1 from g1-specv1 at 67e6187 (clean.py sha256 c7b192ab), run on my machine: keep 20,360, fix 8,162, drop 600, 0 errors. Spec v1 changed 26 of the 100 picked docs.
 - **Method: AI-assisted.** Claude (Anthropic) made a first pass over all 100 docs and suggested 148 findings. I accepted all 148 unchanged and added or rejected none. The CSV column `source` marks each one.
-- **Approved spec v1:** the approved version (PR #194 at e7531f9, clean.py sha256 d3464bda) differs from the one read here only by the shared F1 rule for math. On these 100 docs it changes one: in e1d06f4e49257cfe it replaces an email at clean offset 2954, inside the C1 block reported at @2801, with `<EMAIL>`. The other 99 docs come out byte-identical to the text read. The math rules and the shared F1 are the same at g1-specv1 5a28e53. I will check the 100 docs again against TSAI's job output when it is returned.
+- **Checked on TSAI's job output (4 Nov):** the cleaned part `train/math-finemath/part-00000.parquet` of tokenizer sample v0-clean, from the TSAI job on #244 (clean.py sha256 97c1a55b at 8da2ac4). Its sha256 7b3366baf9b8b756 matches `cleaned_manifest.json`. It keeps the same 28,522 doc_ids as my run, so the seed picks the same 100 docs. 99 of them are byte-identical to the text read. In e1d06f4e49257cfe the shared F1 rule replaces an email at clean offset 2954 with `<EMAIL>`. That email is inside the C1 block at @2801, which is 366 characters in the job output and 378 in the text read. The CSV keeps the positions of the text read.
 - **Positions:** offsets count characters (code points) from 0 in the original text. This summary and the CSV hold no doc text.
 
 ## Findings (docs out of 100)
