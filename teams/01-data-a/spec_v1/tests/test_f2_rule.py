@@ -7,6 +7,7 @@ loads the full set (about 20 s, 1.1 GB); the others load one benchmark.
   python -m pytest spec_v1/tests
 """
 import hashlib
+import importlib.util
 import json
 import os
 import runpy
@@ -103,6 +104,10 @@ def run_f2_here(monkeypatch, tmp_path, rows):
     pack = tmp_path / "en-dclm.parquet"
     pq.write_table(pa.Table.from_pylist(rows), pack)
     monkeypatch.setattr(sys, "argv", ["run_clean.py", "--pack", str(pack), "--out", str(tmp_path / "out"), "--f2"])
+    sys.path.insert(0, str(SPEC))
+    import clean  # run_clean.py wraps clean._run and adds to clean._ID: undo both after the test, for the tests that follow
+    monkeypatch.setattr(clean, "_run", clean._run)
+    monkeypatch.setattr(clean, "_ID", dict(clean._ID))
     with pytest.raises(SystemExit) as e:
         runpy.run_path(str(SPEC / "run_clean.py"), run_name="__main__")
     s = json.loads((tmp_path / "out" / "en-dclm_summary.json").read_text(encoding="utf-8"))
@@ -122,6 +127,21 @@ def test_f2_reads_the_text_clean_py_keeps(one_benchmark, monkeypatch, tmp_path):
     assert code == 0 and s["actions"] == {"keep": 1, "fix": 1, "drop": 1}  # actions stay clean.py's
     assert s["final"] == {"kept": 1, "dropped_by_clean": 1, "dropped_by_f2": 1, "errors": 0}
     assert [d["doc_id"] for d in s["f2"]["dropped"]] == ["d2"] and out.column("doc_id").to_pylist() == ["d1"]
+    # by_rule: the rule that removed the zero-width space, the rule that dropped d3, and F2
+    assert s["by_rule"]["F2"] == {"fix": 0, "drop": 1}
+    assert sum(n["fix"] for rid, n in s["by_rule"].items() if rid != "F2") >= 1
+    assert sum(n["drop"] for rid, n in s["by_rule"].items() if rid != "F2") == 1
+
+
+def test_the_lab_canary_is_dropped(one_benchmark):
+    """Set v2 checks the lab canary that marks eval files, as canary_scan.py does. Read from G9's module, never written here."""
+    spec = importlib.util.spec_from_file_location("g9_lab_canary", f2_rule._g9() / "lab_canary.py")
+    lab = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(lab)
+    text = f"Some notes.\n{lab.LAB_CANARY}\n"
+    flagged, hits = f2_rule.check(text)
+    assert flagged and f2_rule.f2({"doc_id": "x", "text": text})[0] == "drop"
+    assert hits[0]["offset"] == len("Some notes.\n")
 
 
 def test_an_f2_error_is_reported_by_type_and_the_run_fails(one_benchmark, gpqa, monkeypatch, tmp_path):

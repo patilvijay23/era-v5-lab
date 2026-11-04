@@ -1,15 +1,16 @@
 """F2, benchmark leak: G9's decontamination check (teams/09-evaluation/decontam, PR 31) as a rule.
 
 A doc is dropped when it shares one run of words (13 words, 20 tokens for code) with an item of G9's fingerprint set,
-or holds a benchmark canary string. The check is G9's own code and set, unchanged: only the full set is the formal
-check, and a report gives its set_sha256.
+or holds a benchmark canary or the lab canary. Set v2 also holds the G5 held-out set, so a training doc that overlaps it is
+dropped too. With the lab canary in the check, F2 also covers what canary_scan.py looks for (eval firewall, G9 #269).
+The check is G9's own code and set, unchanged: only the full set is the formal check, and a report gives its set_sha256.
 
   python spec_v1/run_clean.py --pack <pack>.parquet --out out --f2      clean.py, then F2 on each doc it keeps
   python -I tools/harm_test.py --pack <pack>.parquet --gold gold/<pack>_gold.csv --rules spec_v1/tools/f2_rule.py --rule F2 --timeout 300
 
 --timeout 300: the set loads inside the first rule call, past harm_test.py's default of 5 s.
 The set is pinned: SET names its folder and SET_SHA256 its set_sha256, and a set with another set_sha256 is refused.
-F2_FINGERPRINTS can point to a copy of the same set elsewhere. A new set from G9 (v2) needs its own harm test, then both
+F2_FINGERPRINTS can point to a copy of the same set elsewhere. A new set from G9 needs its own harm test, then both
 SET and SET_SHA256 changed here.
 The full set needs about 1.1 GB of memory and loads in about 20 s, once, on the first doc.
 It finds copies only (G9's README): a reworded, translated or very short item is not found, nor a benchmark outside the set.
@@ -21,8 +22,8 @@ import sys
 from functools import cache
 from pathlib import Path
 
-SET = "v1"  # G9's fingerprint set: teams/09-evaluation/fingerprints/<SET>
-SET_SHA256 = "11e290a44d1467875fdf8bebc55eab21f0a6367f411aab98a4a027a546fd372e"  # its set_sha256, harm-tested on the 13 packs
+SET = "v2"  # G9's fingerprint set: teams/09-evaluation/fingerprints/<SET> (#280, normalizer g9-v2)
+SET_SHA256 = "2826a3b883210c653979103c09ce1c79e40fc4f7034b54027f2836482370d22a"  # its set_sha256, harm-tested on the 13 packs
 
 
 def _g9():

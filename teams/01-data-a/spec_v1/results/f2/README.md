@@ -1,6 +1,6 @@
-# F2 results: G9 fingerprints v1
+# F2 results: G9 fingerprints v2
 
-`run_clean.py --f2` and the F2 harm tests on the 13 Data A packs. Fingerprint set `11e290a44d1467875fdf8bebc55eab21f0a6367f411aab98a4a027a546fd372e` (full set, pinned in `tools/f2_rule.py`), `clean.py` `a5a1a596a0e7`, `tools/f2_rule.py` `0f6968be84b1`. The reports of F2 alone are `f2_<pack>_harm.json`.
+`run_clean.py --f2` and the F2 harm tests on the 13 Data A packs. Fingerprint set `2826a3b883210c653979103c09ce1c79e40fc4f7034b54027f2836482370d22a` (full set, pinned in `tools/f2_rule.py`), `clean.py` `97c1a55b89f4`, `tools/f2_rule.py` `50fc4a36331e`. The reports of F2 alone are `f2_<pack>_harm.json`.
 
 | pack | docs | dropped by `clean.py` | **dropped by F2** | kept | errors | gold hit by F2 alone | gold hit by `clean.py` then F2 | gold docs | limit | harm |
 |---|---:|---:|---:|---:|---:|---:|---|---:|---:|---|

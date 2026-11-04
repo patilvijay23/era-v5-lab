@@ -14,6 +14,8 @@ doc_ids, and the SHA-256 of the input file and of the clean.py that ran; no text
 The summary also gets "rule_seconds": for each rule that ran, the seconds it took in total, how many documents it ran on ("calls")
 and the milliseconds per call, slowest first. A rule SCOPE skips on this pack, or one never reached because an earlier rule dropped
 the document, has no entry. It is the per-rule time profile for Gate 2: it shows which rules are slow at scale.
+"by_rule" is how many documents each rule fixed or dropped (and F2, with --f2), most first. A document fixed by three rules
+counts under each, so these add up to more than the documents fixed.
 The summary gets "f2": the set_sha256, and each dropped doc_id with up to 5 benchmark items and the offset in the cleaned text,
 and "final": kept, dropped by clean.py, dropped by F2 and errors, which add up to the input rows ("actions" stays clean.py's).
 
@@ -62,6 +64,7 @@ if args.f2:
     except (OSError, ValueError) as e:
         sys.exit(f"--f2: {e}")
 rule_time = {}  # rule id -> [seconds, calls]
+by_rule = {}  # rule id -> Counter(fix=, drop=): the docs each rule changed or dropped; a doc fixed by 3 rules counts under each
 
 
 def _timed(rid, make):
@@ -72,18 +75,21 @@ def _timed(rid, make):
         def timed(doc):
             start = time.perf_counter()
             try:
-                return rule(doc)
+                action, text = rule(doc)
             finally:  # a rule that raises still used the time
                 entry = rule_time.setdefault(rid, [0.0, 0])
                 entry[0] += time.perf_counter() - start
                 entry[1] += 1
+            if action == "drop" or text != doc["text"]:
+                by_rule.setdefault(rid, Counter())["drop" if action == "drop" else "fix"] += 1
+            return action, text
         return timed
     return factory
 
 
 _timed_make = {make: _timed(rid, make) for rid, make in c._RULE.items()}
 c._ID.update({timed: c._ID[make] for make, timed in _timed_make.items()})  # _run looks the rule's SCOPE up by its factory
-_untimed_run = c._run
+_untimed_run = c.__dict__.setdefault("_untimed_run", c._run)  # clean.py's own _run: wrap it once, also when run twice in one process
 c._run = lambda doc, *factories: _untimed_run(doc, *(_timed_make[make] for make in factories))  # every a1()..clean() calls _run
 args.out.mkdir(parents=True, exist_ok=True)
 t0, actions, dropped, errors, kept, f2_dropped = time.time(), Counter(), [], [], [], []
@@ -114,6 +120,9 @@ summary = {"pack": args.pack.name, "input_sha256": sha256(args.pack), "pack_id":
 if f2:  # actions are clean.py's; final is what was written, after F2
     summary["f2"] = {"set_sha256": f2.fingerprints().set_sha256, "dropped": f2_dropped}
     summary["final"] = final
+    if f2_dropped:
+        by_rule["F2"] = Counter(drop=len(f2_dropped))
+summary["by_rule"] = {rid: {"fix": n["fix"], "drop": n["drop"]} for rid, n in sorted(by_rule.items(), key=lambda kv: -sum(kv[1].values()))}
 (args.out / f"{name}_summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8", newline="\n")
 profile = summary["rule_seconds"]
 rules_total = sum(v["seconds"] for v in profile.values()) or 1e-9
@@ -121,5 +130,8 @@ print(f"\nslowest rules of {len(profile)} that ran (rules took {rules_total:.1f}
 print(f"  {'rule':<14}{'seconds':>10}{'share':>8}{'calls':>9}{'ms/call':>10}", file=sys.stderr)
 for rid, v in list(profile.items())[:10]:
     print(f"  {rid:<14}{v['seconds']:>10.1f}{v['seconds'] / rules_total:>8.1%}{v['calls']:>9}{v['ms_per_call']:>10.3f}", file=sys.stderr)
-print({k: v for k, v in summary.items() if k not in ("dropped", "f2", "rule_seconds")}, "dropped:", len(dropped), *(("F2 dropped:", len(f2_dropped)) if f2 else ()))
+print(f"\n  {'rule':<14}{'fixed':>8}{'dropped':>9}   (docs each rule changed; a doc can count under several)", file=sys.stderr)
+for rid, n in summary["by_rule"].items():
+    print(f"  {rid:<14}{n['fix']:>8}{n['drop']:>9}", file=sys.stderr)
+print({k: v for k, v in summary.items() if k not in ("dropped", "f2", "rule_seconds", "by_rule")}, "dropped:", len(dropped), *(("F2 dropped:", len(f2_dropped)) if f2 else ()))
 sys.exit(1 if errors else 0)
