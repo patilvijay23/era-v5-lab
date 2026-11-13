@@ -290,6 +290,26 @@ A stage's **digest** is the sha256 over the sorted `relative/path<TAB>hash` of e
 
 </details>
 
+### Shards
+
+`shards/shard_writer.py` makes one shard from one part of `final/`. Before it writes anything, `shards/provenance.py` checks the part's chain back to the raw sample part (`shards/shard_format_v1.md`, "Where a shard's input comes from").
+
+```bash
+python -I teams/01-data-a/shards/shard_writer.py --input <run>/final/train/<pack>/<part>.parquet \
+    --manifest <run>/pipeline_manifest.json --tokenizer <tokenizer.json> \
+    --language <language> --script <script> --lane <lane> --out <dir>
+```
+
+| Argument | Meaning |
+|---|---|
+| `--input` | a part under `<run>/final/<split>/<pack>/`; only `train` parts are sharded for now |
+| `--manifest` | the run's `pipeline_manifest.json` |
+| `--tokenizer` | G3's frozen C3 `tokenizer.json` (`--any-tokenizer` accepts another one, for tests only) |
+| `--language`, `--script`, `--lane` | recorded in the shard's manifest |
+| `--domain` | optional; default: the pack's family in `clean.py` |
+| `--index`, `--tokens` | shard number (default 0) and token limit (default 2^26) |
+| `--out` | output folder |
+
 <br>
 
 ## Data handling

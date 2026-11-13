@@ -1,12 +1,15 @@
 # Shard format v1 (draft)
 
 How the cleaned packs become token shards for training. Agreed with G3 (tokenizer, answers below); open with G7
-(infrastructure). The manifest template is `shard_manifest_v1.template.json`; `shard_writer.py` writes one shard from one
-cleaned part and checks it; `test_shard_writer.py` tests it.
+(infrastructure). The manifest template is `shard_manifest_v1.template.json`. `shard_writer.py` writes one shard from one
+part of the pipeline's final folder (clean, dedup, then F2: `pipeline/README.md`) and checks it; `provenance.py` checks that
+part's chain back to the raw sample first; `tests/` tests both.
 
 **Sample:** `sample/` holds `code-go-train-000000` (271 docs, 262,032 tokens), written with the C3 tokenizer from the CAP-1
 tokenizer sample, with every file below except the `.bin` and `.docs.parquet`, which pr-guard refuses in a PR.
-`sample/README.md` gives the inputs, the commands that make them, and the sha256 of every file.
+`sample/README.md` gives the inputs, the commands that make them, and the sha256 of every file. The sample predates the
+pipeline hand-off below: it was made from `run_clean.py --f2` output (F2 before dedup), so its `cleaning_pipeline.json`
+has `"dedup": null` and its `inputs_sha256` uses the older line format. It is regenerated from a pipeline run for the release.
 
 ## Files of one shard
 
@@ -50,6 +53,47 @@ A document is left out, counted, and listed by doc_id in the shard's quality rep
 | it encodes to no tokens | nothing to train on |
 | an email-like or secret-like string | pr-guard's patterns; personal data stays out |
 
+## Where a shard's input comes from
+
+A shard is made from one part of the pipeline's final folder, in the order TSAI set: clean, dedup, then F2.
+
+```
+<run>/pipeline_manifest.json                       run_pipeline.py's record of the run
+<run>/final/<split>/<pack>/<part>.parquet          what F2 kept (the shard writer's --input)
+<run>/final/<split>/<pack>/<part>.parquet.f2.json  F2's report for the part
+<run>/deduped/apply_dedup_summary.json             what apply removed, with the sha256 of every part it read and wrote
+```
+
+The writer's `--input` is a part under `final/`, and `--manifest` is the run's `pipeline_manifest.json`. The folder layout
+is the pipeline's, not the writer's: apply, dedup and F2 all name a part by its split and its path under the split
+(`<pack>/<part>.parquet`), so the writer finds the part's records by the same two names. The `<split>` folder gives the
+shard's split.
+
+`provenance.py` checks the chain before anything is written, one sha256 per link, and stops naming the link that broke:
+
+| Link | Must match |
+|---|---|
+| the part, as it is now | `output_sha256` in its `.f2.json` |
+| the `.f2.json` | `input_sha256` = what apply wrote for that part; no errors; the fingerprint set of the manifest |
+| apply | the `remove_list.csv` on disk (its sha256), and the rows it removed from the part |
+| dedup | every removed doc has a removed member in `dedup_groups.csv` (group and rule) |
+| the clean job | `job_summary.json` in clean's output folder: the cleaned part's `output_sha256`, then the raw part's `input_sha256` and the `clean_sha256` |
+
+A clean output folder with no `job_summary.json` stops the writer: the raw part's sha256 is recorded nowhere else.
+
+What the writer records from it:
+
+| Where | What |
+|---|---|
+| `cleaning_pipeline.json` | `clean_py_sha256`, `f2_set_sha256`, `dedup` (`remove_list_sha256`, `remove_list_rows`), `pipeline` (`run_id`, `manifest_sha256`, `git_commit`). It describes the run, so every shard of a run has the same file; an `--out` holding one from another run is refused |
+| `inputs_sha256` | the sha256 of the line `<raw part sha256> <split>/<pack>/<part>.parquet` |
+| `<shard_id>.quality_report.json`, `upstream` | the part's counts (cleaned, removed by dedup, dropped by F2, final); the doc_ids dedup removed, with their group and rule; the doc_ids F2 dropped, with benchmark item IDs and offsets. The whole input part, whether or not all its rows fit in the shard. Never text |
+
+`domain` is `--domain`, else clean.py's family of the pack (code, english, math, sci, indic); a pack clean.py does not list needs `--domain`.
+
+**Held-out parts are not sharded yet.** The pipeline keeps `heldout/` apart (dedup never removes from it), and this format
+has `train` and `validation` only. Whether a held-out part becomes `validation` is for G3 and G9 to say; the writer refuses it until then.
+
 ## Manifest fields
 
 | Field | Meaning |
@@ -63,9 +107,9 @@ A document is left out, counted, and listed by doc_id in the shard's quality rep
 | `doc_count`, `token_count` | documents and tokens in the shard, EOS included |
 | `eos_token_id` | 130,822 |
 | `tokenizer_sha256` | sha256 of the `tokenizer.json` bytes that made the IDs (C3: `15468e66…`) |
-| `pack_id`, `language`, `script`, `domain`, `capability_lane`, `split` | what is in the shard. `split` is `train` or `validation` only: test and benchmark data are never sharded (eval firewall, G9 #269) |
-| `inputs_sha256` | sha256 of the sorted lines `<input_sha256> <part>` of the input parts `run_clean.py` read (from its summaries) |
-| `cleaning_pipeline_sha256` | sha256 of `cleaning_pipeline.json`: the `clean.py` sha256, the F2 fingerprint set and the dedup version |
+| `pack_id`, `language`, `script`, `domain`, `capability_lane`, `split` | what is in the shard. `split` is `train` or `validation` only: test and benchmark data are never sharded (eval firewall, G9 #269). It is taken from the input's folder, and only `train` is written for now |
+| `inputs_sha256` | sha256 of the line `<raw part sha256> <split>/<pack>/<part>.parquet`: the raw sample part the shard's documents came from (from the clean job's `job_summary.json`) |
+| `cleaning_pipeline_sha256` | sha256 of `cleaning_pipeline.json`: the `clean.py` sha256, the F2 fingerprint set, the dedup remove list and the pipeline run |
 | `decontam_set_sha256` | the G9 fingerprint set F2 checked against (v2 today). A new set means rechecking every shard with an older one |
 | `sample_metadata_*`, `quality_report_*` | links to what is kept outside the manifest, with hashes |
 | `created_by` | the git commit of the shard writer |
@@ -117,6 +161,8 @@ corpus-v1/
 
 ## Not done yet
 
+- A runner that shards every train part of a final folder (pack metadata table: language, script, lane).
+- What a held-out part becomes (G3, G9).
 - Several shards per part, and the release's `SHA256SUMS` and `admission.jsonl`.
 - The loader and its run of `ckpt/loader_contract.py`.
 - The `capability_lane` values: from the training plan.
