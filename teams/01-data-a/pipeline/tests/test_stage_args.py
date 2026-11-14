@@ -26,24 +26,74 @@ def folders(repo):
     return {s: repo / "out" / "run1" / s for s in ("clean", "overlap", "dedup")}
 
 
+def clean_spec(repo, **over):
+    """A clean stage entry with its input set described: a made-up manifest in the repository and its pin."""
+    (repo / "manifest.json").write_text('{"shards": []}', encoding="utf-8")
+    spec = {"settings": "job.json", "input": "inputs/sample", "manifest": "manifest.json", "manifest_sha256": sa.sha256(repo / "manifest.json"),
+            "expected_parts": {"train": 1, "heldout": 1}, "sample": "made up"}
+    return {**spec, **over}
+
+
 def settings(repo, name, data):
     p = repo / f"{name}.json"
     p.write_text(json.dumps(data), encoding="utf-8")
     return p
 
 
-def test_clean_gets_flags_and_no_generated_config(repo, folders):
-    s = settings(repo, "job", {"clean_sha256": "c" * 64})
-    r = sa.build("clean", {"settings": "job.json", "input": "inputs/sample"}, folders, repo / "out/run1/cfg", repo)
-    assert r["command"] == [sa.DEFAULT_SCRIPT["clean"], "--config", str(s), "--out", str(folders["clean"]), "--input-root", "inputs/sample"]
-    assert r["config"] is None and r["settings_sha256"] == sa.sha256(s)
-    assert not (repo / "out/run1/cfg").exists()
+def test_clean_gets_a_generated_config_with_the_input_and_its_description(repo, folders):
+    s = settings(repo, "job", {"clean_sha256": "c" * 64, "batch_size": 128})
+    cfg = repo / "out/run1/cfg"
+    spec = clean_spec(repo)
+    r = sa.build("clean", spec, folders, cfg, repo)
+    made = json.loads((cfg / "clean.json").read_text(encoding="utf-8"))
+    assert (made["input_root"], made["output_root"], made["manifest"]) == ("inputs/sample", "out/run1/clean", "manifest.json")
+    assert (made["manifest_sha256"], made["expected_parts"], made["sample"]) == (spec["manifest_sha256"], {"train": 1, "heldout": 1}, "made up")
+    assert made["batch_size"] == 128 and made["clean_sha256"] == "c" * 64  # the settings are kept
+    assert r["command"] == [sa.DEFAULT_SCRIPT["clean"], "--config", (cfg / "clean.json").as_posix()]
+    assert r["settings_sha256"] == sa.sha256(s) and r["config_sha256"] == sa.sha256(cfg / "clean.json")
 
 
-def test_clean_without_input_leaves_the_job_configs_own_input_root(repo, folders):
+@pytest.mark.parametrize("missing", ["input", "manifest_sha256", "expected_parts"])
+def test_clean_needs_its_input_and_the_description_of_it(repo, folders, missing):
     settings(repo, "job", {})
-    command = sa.build("clean", {"settings": "job.json"}, folders, repo / "cfg", repo)["command"]
-    assert "--input-root" not in command and command[-2:] == ["--out", str(folders["clean"])]
+    spec = clean_spec(repo)
+    del spec[missing]
+    with pytest.raises(sa.ConfigError, match=f"stages.clean.{missing} .* is missing"):
+        sa.build("clean", spec, folders, repo / "cfg", repo)
+
+
+def test_the_manifest_defaults_to_the_one_in_the_input_folder(repo, folders):
+    settings(repo, "job", {})
+    spec = clean_spec(repo)
+    del spec["manifest"]
+    (repo / "inputs" / "sample").mkdir(parents=True)
+    (repo / "inputs" / "sample" / "sample_manifest.json").write_bytes((repo / "manifest.json").read_bytes())
+    sa.build("clean", spec, folders, repo / "cfg", repo)
+    assert json.loads((repo / "cfg" / "clean.json").read_text(encoding="utf-8"))["manifest"] == "inputs/sample/sample_manifest.json"
+
+
+def test_a_missing_or_changed_manifest_stops_a_run_but_not_a_plan(repo, folders):
+    settings(repo, "job", {})
+    spec = clean_spec(repo, manifest="nowhere.json")
+    sa.build("clean", spec, folders, repo / "cfg", repo, write=False)  # a plan does not look for the file
+    with pytest.raises(sa.ConfigError, match="sample manifest .*nowhere.json is not there"):
+        sa.build("clean", spec, folders, repo / "cfg", repo)
+    (repo / "manifest.json").write_text('{"shards": [1]}', encoding="utf-8")  # changed after it was pinned
+    with pytest.raises(sa.ConfigError, match="manifest_sha256 pins"):
+        sa.build("clean", {**spec, "manifest": "manifest.json"}, folders, repo / "cfg", repo)
+
+
+def test_only_adds_one_flag_per_part_to_clean_and_clears_overlaps_expected_packs(repo, folders):
+    settings(repo, "job", {})
+    settings(repo, "overlap", OVERLAP)
+    clean = clean_spec(repo)
+    parts = ["train/code-go/part-00000.parquet", "heldout/code-go/part-00000.parquet"]
+    command = sa.build("clean", clean, folders, repo / "cfg", repo, only=parts)["command"]
+    assert command[-4:] == ["--only", parts[0], "--only", parts[1]]
+    sa.build("overlap", {"settings": "overlap.json"}, folders, repo / "cfg", repo, only=parts)
+    assert json.loads((repo / "cfg" / "overlap.json").read_text(encoding="utf-8"))["expected_packs"] == []
+    sa.build("overlap", {"settings": "overlap.json"}, folders, repo / "cfg2", repo)
+    assert json.loads((repo / "cfg2" / "overlap.json").read_text(encoding="utf-8"))["expected_packs"] == ["code-go"]
 
 
 def test_overlap_config_gets_the_paths_and_keeps_every_setting(repo, folders):

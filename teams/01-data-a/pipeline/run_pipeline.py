@@ -1,6 +1,6 @@
 """One command for Data A's pipeline: clean -> overlap -> dedup -> apply the remove list -> F2 -> survivor loss -> shards.
 
-  python -I teams/01-data-a/pipeline/run_pipeline.py --config teams/01-data-a/pipeline/pipeline.json [--from STAGE] [--to STAGE]
+  python -I teams/01-data-a/pipeline/run_pipeline.py --config teams/01-data-a/pipeline/pipeline.json [--plan]
 
 It runs or adopts each stage in order, checks that each stage follows from the one before (counts and sha256 links), and
 writes <out>/<run_id>/pipeline_manifest.json. It never reimplements a stage: clean (#244), overlap and dedup (#255) and F2
@@ -19,16 +19,27 @@ STAGES
                  list, overlap run and dedup settings: the processing behind the shards), then shards/run_shards.py on <run>/final   -> <run>/shards (or "out")
                  It runs after the manifest holds every earlier stage, which is what the shard writer reads; its own record is
                  added to the manifest afterwards. The stage stops the run if a part failed or was skipped, if no shard was
-                 written, or if the summary is not this run's. --from shards runs only this stage, into an out folder without shards.
+                 written, or if the summary is not this run's. "from": "shards" runs only this stage, into an out folder without shards.
 
 clean, overlap and dedup take "mode": "adopt" (TSAI ran the job; "output" names the folder it returned) or "mode": "run".
 A run stage names a "settings" file (settings only, no paths) and the runner works out the rest: its folder is <run>/<stage>
 (or "output", below ./out), it reads the previous stage's folder, and stage_args.py turns that into the script's command. clean
-gets flags (--config, --out, and --input-root from "input"); overlap and dedup get a copy of the settings with their path keys
-filled in, written to <run>/cfg/<stage>.json. "script" replaces the default script; "settings_sha256" pins the settings file
+gets a copy of its settings with the path keys filled in (clean: input_root from "input", output_root, and the input set's
+description from the stage: manifest, manifest_sha256, expected_parts, sample; overlap: inputs, out; dedup: results, inputs,
+out), written to <run>/cfg/<stage>.json and passed with --config. The clean stage's manifest defaults to sample_manifest.json in
+its input folder, and its sha256 must equal manifest_sha256 (checked just before the job starts, not by --plan). "script" replaces the default script; "settings_sha256" pins the settings file
 (checked, and the manifest records the file's sha256 either way). Escape hatch: "command" (the script and its arguments, run
 with this Python from the repository root) with "output" (where that script writes) skips all of this.
---plan checks the config and prints each stage's folder and command, without running or writing anything.
+--plan checks the config and prints each stage's folder and command, without running or writing anything. It is the only
+option besides --config: every run parameter is in the config file, so a run is reproduced from that file alone.
+
+RUN PARAMETERS (all in the config file; the manifest embeds the whole config)
+  run_id                 names the run: its folders are <out>/<run_id>/ (the clean job refuses an existing folder, so a new run
+                         needs a new run_id)
+  "mode": "adopt"        on clean, overlap or dedup, with "output": the folder to use instead of running the stage
+  to                     stop after this stage; only the stages up to it are checked
+  from                   resume at this stage: the earlier stages must be recorded in the manifest with unchanged digests
+  stages.clean.only      run the clean job on these sample parts only (a list, for trials); overlap then expects no packs
 apply, f2 and survivor_loss always run. f2 takes "script" (default teams/01-data-a/spec_v1/run_f2.py) and "workers"
 (default 1; each run_f2.py process loads G9's full set, about 1.1 GB of memory, so N workers need about N × 1.1 GB plus the
 documents in flight). shards takes "tokenizer" (required: G3's C3 tokenizer.json), and optionally "script" (default
@@ -36,7 +47,7 @@ teams/01-data-a/shards/run_shards.py), "out" (default <run>/shards), "tokens", "
 "any_tokenizer" (tests only). apply takes "link" (default true: untouched parts are hard-linked, not copied). Scripts run with
 python -I, which ignores user site-packages and PYTHONPATH: install pyarrow and the rest into the environment itself.
 Each script's output streams to <run>/logs/<stage>.log (F2: logs/f2_<split>[_<pack>].log).
-Without stages.shards the run stops after survivor_loss, and --to shards is an error.
+Without stages.shards the run stops after survivor_loss, and "to": "shards" is an error.
 
 CONFIG (JSON; keys starting with "_" are comments; paths relative to the repository root, or absolute)
 =====================================================================================================
@@ -52,7 +63,7 @@ CHECKS (any failure stops the run; exit code 1)
   f2        per split: its rows = apply's kept rows; every part's report names, as input_sha256, the sha256 apply wrote;
             one fingerprint set; kept + dropped + errors = rows; no errors; no stale Parquet under final/<split>
   survivor  groups = the groups in dedup_groups.csv
-  --from    every earlier stage's output still has the digest the manifest recorded for it
+  from      every earlier stage's output still has the digest the manifest recorded for it
 
 MANIFEST
 ========
@@ -173,13 +184,19 @@ def load_json(file):
 
 class Run:
     def __init__(self, cfg_path):
+        """Every run parameter is in the config file: run_id, the stages (each run from a settings file or adopted), and the
+        optional "from", "to" and stages.clean.only (see the docstring)."""
         self.cfg_path = Path(cfg_path)
         self.cfg = load_json(self.cfg_path)
         if not self.cfg.get("run_id"):
             raise Stop(f"{cfg_path}: run_id is missing")
+        self.stages = self.cfg.setdefault("stages", {})
+        clean = self.stages.get("clean")
+        self.only = (clean.get("only") or []) if isinstance(clean, dict) else []
+        if not isinstance(self.only, list) or not all(isinstance(p, str) for p in self.only):
+            raise Stop("config: stages.clean.only must be a list of sample parts, e.g. [\"train/code-go/part-00000.parquet\"]")
         self.dir = path(self.cfg.get("out", "out/pipeline")) / self.cfg["run_id"]
         self.manifest_path = self.dir / "pipeline_manifest.json"
-        self.stages = self.cfg.get("stages", {})
         self.done, self.checks = {}, []
 
     def output(self, stage):
@@ -207,13 +224,18 @@ class Run:
         if spec.get("command"):
             return {"command": spec["command"], "settings": None, "settings_sha256": None, "config": None, "config_sha256": None}
         try:
-            return stage_args.build(stage, spec, {s: self.output(s) for s in EXTERNAL}, self.dir / "cfg", REPO, write)
+            return stage_args.build(stage, spec, {s: self.output(s) for s in EXTERNAL}, self.dir / "cfg", REPO, write, self.only)
         except stage_args.ConfigError as e:
             raise Stop(f"config: {stage}: {e}")
 
     def validate(self, upto):
-        """The whole config, before anything runs."""
-        for stage in EXTERNAL:
+        """The config of every stage up to `upto`, before anything runs."""
+        active = [s for s in EXTERNAL if STAGES.index(s) <= STAGES.index(upto)]
+        if self.only:
+            clean = self.stages.get("clean") or {}
+            if clean.get("mode", "adopt") != "run" or clean.get("command"):
+                raise Stop("config: stages.clean.only limits the clean job to some parts, so clean must run from a settings file (not adopted, not a command)")
+        for stage in active:
             spec = self.stages.get(stage)
             if not isinstance(spec, dict):
                 raise Stop(f"config: stages.{stage} is missing")
@@ -243,14 +265,14 @@ class Run:
                 raise Stop(f"config: f2 script {script} not found (run_f2.py is teams/01-data-a/spec_v1/run_f2.py; set stages.f2.script)")
         if "shards" in self.stages or upto == "shards":
             self.validate_shards(upto)
-        outs = {stage: self.output(stage).resolve() for stage in EXTERNAL}
+        outs = {stage: self.output(stage).resolve() for stage in active}
         r = self.dir.resolve()
         for stage, o in outs.items():
             if o == r or o in r.parents:
                 raise Stop(f"config: stages.{stage}.output and the run folder {self.dir} overlap")
             if r in o.parents and o.relative_to(r).parts[0] in RESERVED:
                 raise Stop(f"config: stages.{stage}.output {o} is a folder of the run itself ({', '.join(RESERVED)})")
-        for a, b in [(a, b) for i, a in enumerate(EXTERNAL) for b in EXTERNAL[i + 1:]]:
+        for a, b in [(a, b) for i, a in enumerate(active) for b in active[i + 1:]]:
             if outs[a] == outs[b] or outs[a] in outs[b].parents or outs[b] in outs[a].parents:
                 raise Stop(f"config: stages.{a}.output and stages.{b}.output overlap")
 
@@ -277,7 +299,7 @@ class Run:
     def plan(self, to=None):
         """What a run would do, as text: each stage's mode, output folder and command, with every path resolved. The config is
         checked first, as for a run; nothing is run or written."""
-        to = to or (STAGES[-1] if "shards" in self.stages else "survivor_loss")
+        to = to or self.cfg.get("to") or (STAGES[-1] if "shards" in self.stages else "survivor_loss")
         if to not in STAGES:
             raise Stop(f"unknown stage {to!r}; stages are {', '.join(STAGES)}")
         self.validate(to)
@@ -295,7 +317,8 @@ class Run:
                     lines.append(f"     settings {built['settings']} (sha256 {built['settings_sha256'][:12]}…)")
                 if built["config"]:
                     lines.append(f"     generated config {self.shown(built['config'])}: " + ", ".join(
-                        f"{k} = {v}" for k, v in stage_args.generated_values(stage, {s: self.output(s) for s in EXTERNAL}, REPO).items()))
+                        f"{k} = {v}" for k, v in stage_args.generated_values(stage, {s: self.output(s) for s in EXTERNAL}, REPO, self.stages[stage]).items()
+                        if k in stage_args.PATH_KEYS))
             elif stage == "f2":
                 f2 = self.stages.get("f2", {})
                 lines.append(f"{n:02d} {stage:13} run    {out}   {f2.get('script', DEFAULT_F2)}, workers {f2.get('workers', 1)}")
@@ -329,6 +352,8 @@ class Run:
         counts = getattr(self, f"counts_{stage}")(out)
         rec = {"mode": mode, "command": command, "code_sha256": sha256(path(command[0])) if command else None,
                "output": self.shown(out), "counts": counts}
+        if self.only and stage == "clean":
+            rec["only"] = self.only
         if built and built["settings"]:  # a stage run from a settings file: which file, and the config it was run with
             rec.update(settings=built["settings"], settings_sha256=built["settings_sha256"],
                        config=Path(built["config"]).relative_to(self.dir).as_posix() if built["config"] else None,
@@ -446,7 +471,7 @@ class Run:
         if failed:
             n, rc, log = failed[0]
             raise Stop(f"f2: {len(failed)} of {len(units)} unit(s) failed without a summary, e.g. {n} "
-                       f"(exit code {rc}): {tail(log)}. Rerun --from f2: finished files are skipped")
+                       f"(exit code {rc}): {tail(log)}. Rerun with from = f2: finished files are skipped")
 
         totals = {"rows": 0, "kept": 0, "dropped_by_f2": 0, "errors": 0}
         by_split, sets = {sp: dict.fromkeys(totals, 0) for sp in splits}, set()
@@ -532,12 +557,13 @@ class Run:
 
     # --- the run ----------------------------------------------------------------------------------------------------
     def execute(self, start=None, to=None):
-        start, to = start or STAGES[0], to or (STAGES[-1] if "shards" in self.stages else "survivor_loss")
+        start = start or self.cfg.get("from") or STAGES[0]
+        to = to or self.cfg.get("to") or (STAGES[-1] if "shards" in self.stages else "survivor_loss")
         for s in (start, to):
             if s not in STAGES:
                 raise Stop(f"unknown stage {s!r}; stages are {', '.join(STAGES)}")
         if STAGES.index(start) > STAGES.index(to):
-            raise Stop(f"--from {start} comes after --to {to}")
+            raise Stop(f"\"from\": {start} comes after \"to\": {to}")
         self.validate(to)
         old = {s["stage"]: s for s in load_json(self.manifest_path)["stages"]} if self.manifest_path.is_file() else {}
         sys.path.insert(0, str(HERE))
@@ -545,7 +571,7 @@ class Run:
             out = self.output(stage)
             if STAGES.index(stage) < STAGES.index(start):
                 if stage not in old:
-                    raise Stop(f"--from {start}: stage {stage} has no record in {self.manifest_path}; run it first")
+                    raise Stop(f"\"from\": {start}: stage {stage} has no record in {self.manifest_path}; run it first")
                 if not out.exists() or digest(out)[0] != old[stage]["digest"]:
                     raise Stop(f"{stage}: {out} changed after the manifest recorded it; rerun from {stage}")
                 self.done[stage] = old[stage]
@@ -599,6 +625,7 @@ def pyarrow_version():
 
 
 def run(config, start=None, to=None):
+    """start and to default to the config's "from" and "to"; the arguments are for tests and scripts, not the command line."""
     return Run(config).execute(start, to)
 
 
@@ -608,16 +635,14 @@ def plan(config, to=None):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--config", type=Path, required=True, help="pipeline JSON config")
-    ap.add_argument("--from", dest="start", choices=STAGES, help="first stage to run (earlier ones must be recorded)")
-    ap.add_argument("--to", choices=STAGES, help="last stage to run")
+    ap.add_argument("--config", type=Path, required=True, help="the run config (JSON): every run parameter is in this file")
     ap.add_argument("--plan", action="store_true", help="check the config and print every stage's folder and command; run nothing")
     args = ap.parse_args()
     try:
         if args.plan:
-            print(plan(args.config, args.to))
+            print(plan(args.config))
             return
-        m = run(args.config, args.start, args.to)
+        m = run(args.config)
     except Stop as e:
         sys.exit(f"run_pipeline: {e}")
     print(json.dumps(m["totals"]))

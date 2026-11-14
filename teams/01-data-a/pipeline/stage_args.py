@@ -1,19 +1,17 @@
 """How run_pipeline.py hands paths to the three stage scripts it can run (clean, overlap, dedup).
 
 A stage's folders are decided once, in the run config, and never typed again: a stage reads the previous stage's folder and
-writes its own. This module turns that into the command each script needs. Two styles, because the scripts differ:
+writes its own. This module turns that into the command each script needs. All three scripts read their paths from a JSON
+config, so each gets a copy of its settings file at <cfg_dir>/<stage>.json with the path keys filled in (repo-relative, as the
+scripts require), and is run with --config on that copy:
+  clean     input_root = the stage's "input", output_root = <clean folder>, and the input set's description from the stage:
+            manifest (default: sample_manifest.json in the input folder), manifest_sha256, expected_parts, sample.
+            run_tokenizer_sample.py also takes one --only <part> per part of the stage's "only" list (a trial on some parts)
+  overlap   inputs = <clean folder>, out = <overlap folder>
+  dedup     results = <overlap folder>, inputs = <clean folder>, out = <dedup folder>
 
-  flags    the script takes its paths on the command line. clean (run_tokenizer_sample.py):
-             --config <settings> --out <clean folder> [--input-root <raw sample>]
-  config   the script only reads paths from its JSON config (overlap.py, dedup.py). The settings file is copied to
-           <cfg_dir>/<stage>.json with the path keys filled in (repo-relative, as those scripts require), and the script is
-           run with --config on that copy:
-             overlap   inputs = <clean folder>, out = <overlap folder>
-             dedup     results = <overlap folder>, inputs = <clean folder>, out = <dedup folder>
-
-When dedup.py and overlap.py take --input/--out flags, change their entries in STAGES to style "flags" and delete
-generated_config(): nothing else changes. The settings file holds settings only (k, floor, pack order, pins); its sha256 is
-returned so the manifest can record it, and a "settings_sha256" in the stage's run config is checked when present.
+The settings file holds settings only (k, floor, pack order, pins); it is never edited. Its sha256 and the generated copy's are
+returned so the manifest can record them, and a "settings_sha256" in the stage's run config is checked when present.
 
   build("overlap", spec, folders=..., cfg_dir=..., repo=...) -> {"command", "settings", "settings_sha256", "config", "config_sha256"}
 """
@@ -24,11 +22,19 @@ from pathlib import Path
 DEFAULT_SCRIPT = {"clean": "teams/01-data-a/spec_v1/run_tokenizer_sample.py",
                   "overlap": "teams/01-data-a/dedup/overlap.py",
                   "dedup": "teams/01-data-a/dedup/dedup.py"}
-STAGES = {  # style, and for "config" style: {config key: the stage whose folder it names}
-    "clean": {"style": "flags"},
-    "overlap": {"style": "config", "keys": {"inputs": "clean", "out": "overlap"}},
-    "dedup": {"style": "config", "keys": {"results": "overlap", "inputs": "clean", "out": "dedup"}},
+STAGES = {  # {config key: the stage whose folder it names}
+    "clean": {"keys": {"output_root": "clean"}},
+    "overlap": {"keys": {"inputs": "clean", "out": "overlap"}},
+    "dedup": {"keys": {"results": "overlap", "inputs": "clean", "out": "dedup"}},
 }
+
+
+# Settings a partial run (--only: some parts of the sample) has to change in a generated config: overlap.py would otherwise
+# stop because the packs of the whole sample are missing.
+PARTIAL = {"overlap": {"expected_packs": []}}
+
+
+PATH_KEYS = ("input_root", "manifest", "inputs", "results", "out", "output_root")  # the generated keys that name a file or folder
 
 
 class ConfigError(Exception):
@@ -55,15 +61,38 @@ def under_out(folder, repo, stage):
         raise ConfigError(f"{stage}: its output {folder} must be a named subfolder of {out}: the {stage} script writes only there")
 
 
-def generated_values(stage, folders, repo):
-    """The path keys a generated config gets: {key: repo-relative folder}. {} for a stage that takes flags."""
-    return {key: relative(folders[owner], repo) for key, owner in STAGES[stage].get("keys", {}).items()}
+def manifest_path(spec):
+    """Where clean reads the sample manifest: stages.clean.manifest, else sample_manifest.json in the input folder."""
+    return str(spec.get("manifest") or (Path(spec["input"]) / "sample_manifest.json").as_posix())
 
 
-def generated_config(stage, settings, folders, cfg_dir, repo, write=True):
+def check_manifest(spec, repo):
+    """Before the clean job starts: the manifest is there and is the pinned file (the job checks too; this fails earlier)."""
+    p = Path(manifest_path(spec))
+    p = p if p.is_absolute() else Path(repo) / p
+    if not p.is_file():
+        raise ConfigError(f"stages.clean: the sample manifest {p} is not there (without stages.clean.manifest it is "
+                          "sample_manifest.json in the input folder)")
+    if sha256(p) != spec["manifest_sha256"]:
+        raise ConfigError(f"stages.clean: the sample manifest {p} has sha256 {sha256(p)[:12]}…, stages.clean.manifest_sha256 pins "
+                          f"{spec['manifest_sha256'][:12]}…")
+
+
+def generated_values(stage, folders, repo, spec=None):
+    """The keys a generated config gets from the run config: {key: repo-relative folder}; for clean also the raw sample as
+    input_root and the input set's description (manifest, manifest_sha256, expected_parts, sample)."""
+    values = {}
+    if stage == "clean" and (spec or {}).get("input"):  # build() requires it
+        values = {"input_root": str(spec["input"]), "manifest": manifest_path(spec), "manifest_sha256": spec["manifest_sha256"],
+                  "expected_parts": spec["expected_parts"], **({"sample": spec["sample"]} if spec.get("sample") else {})}
+    values.update({key: relative(folders[owner], repo) for key, owner in STAGES[stage]["keys"].items()})
+    return values
+
+
+def generated_config(stage, settings, folders, cfg_dir, repo, write=True, extra=None, spec=None):
     """<cfg_dir>/<stage>.json: the settings with the path keys filled in from `folders`. Written unless write=False
     (a plan or a check of the run config). Returns its path."""
-    data = {**json.loads(Path(settings).read_text(encoding="utf-8")), **generated_values(stage, folders, repo)}
+    data = {**json.loads(Path(settings).read_text(encoding="utf-8")), **(extra or {}), **generated_values(stage, folders, repo, spec)}
     path = Path(cfg_dir) / f"{stage}.json"
     if write:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -71,10 +100,11 @@ def generated_config(stage, settings, folders, cfg_dir, repo, write=True):
     return path
 
 
-def build(stage, spec, folders, cfg_dir, repo, write=True):
+def build(stage, spec, folders, cfg_dir, repo, write=True, only=()):
     """The command for a run-mode stage from its run-config entry `spec` ("settings", optional "script", "input",
     "settings_sha256"), the stage folders {"clean", "overlap", "dedup"} (absolute) and where generated configs go.
-    write=False checks everything and names the generated config without writing it (its config_sha256 is then None)."""
+    write=False checks everything and names the generated config without writing it (its config_sha256 is then None).
+    only: sample parts for a trial run (clean gets one --only per part; overlap's generated config gets PARTIAL)."""
     if stage not in STAGES:
         raise ConfigError(f"{stage}: no script of the runner takes paths this way; give an explicit stages.{stage}.command")
     if not spec.get("settings"):
@@ -89,13 +119,17 @@ def build(stage, spec, folders, cfg_dir, repo, write=True):
                           f"{spec['settings_sha256'][:12]}…")
     script = spec.get("script", DEFAULT_SCRIPT[stage])
     under_out(folders[stage], repo, stage)
-    out = {"settings": spec["settings"], "settings_sha256": settings_sha, "config": None, "config_sha256": None}
-    if STAGES[stage]["style"] == "flags":
-        command = [script, "--config", str(settings), "--out", str(folders[stage])]
-        if spec.get("input"):
-            command += ["--input-root", str(spec["input"])]
-    else:
-        config = generated_config(stage, settings, folders, cfg_dir, repo, write)
-        command = [script, "--config", str(config)]
-        out.update(config=config.as_posix(), config_sha256=sha256(config) if write else None)
-    return {"command": command, **out}
+    if stage == "clean":
+        for key, what in (("input", "the folder with the raw sample parts"), ("manifest_sha256", "the pin of the sample manifest"),
+                          ("expected_parts", "the part counts per split")):
+            if not spec.get(key):
+                raise ConfigError(f"stages.clean.{key} ({what}) is missing: it describes the input set, which the settings file does not")
+        if write:
+            check_manifest(spec, repo)
+    config = generated_config(stage, settings, folders, cfg_dir, repo, write, PARTIAL.get(stage) if only else None, spec)
+    command = [script, "--config", str(config)]
+    if stage == "clean":
+        for part in only:
+            command += ["--only", part]
+    return {"command": command, "settings": spec["settings"], "settings_sha256": settings_sha,
+            "config": config.as_posix(), "config_sha256": sha256(config) if write else None}

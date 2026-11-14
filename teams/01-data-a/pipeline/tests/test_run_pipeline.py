@@ -384,13 +384,17 @@ def staged(tmp_path, tsai_outputs, monkeypatch):
         monkeypatch.delenv(k, raising=False)
     monkeypatch.setenv("FAKE_F2_DROP", "g0,h1")
 
+    manifest = tmp_path / "sample_manifest.json"
+    manifest.write_text('{"shards": []}', encoding="utf-8")
+
     def settings(name, fixture, **extra):
         p = tmp_path / f"{name}_settings.json"
         p.write_text(json.dumps({"fixture": str(fixture), **extra}), encoding="utf-8")
         return str(p)
 
     cfg = {"run_id": "test-run", "out": str(repo / "out" / "runs"), "stages": {
-        "clean": {"mode": "run", "script": str(FAKE_STAGE), "settings": settings("clean", tsai_outputs["cleaned"]), "input": "raw/sample"},
+        "clean": {"mode": "run", "script": str(FAKE_STAGE), "settings": settings("clean", tsai_outputs["cleaned"]), "input": "raw/sample",
+                  "manifest": str(manifest), "manifest_sha256": sha(manifest), "expected_parts": {"train": 9, "heldout": 2}, "sample": "made up"},
         "overlap": {"mode": "run", "script": str(FAKE_STAGE), "settings": settings("overlap", tsai_outputs["overlap"], k=5, floor=0.5, inputs="x", out="y")},
         "dedup": {"mode": "run", "script": str(FAKE_STAGE), "settings": settings("dedup", tsai_outputs["dedup"], cross_pack=True, results="x", inputs="x", out="y")},
         "f2": {"script": str(FAKE_F2)}}}
@@ -413,14 +417,15 @@ def test_stages_run_from_settings_into_the_run_folder(tmp_path, staged):
     assert m["totals"] == {"cleaned": 13, "removed_by_dedup": 2, "dropped_by_f2": 2, "final": 9} and all(c["ok"] for c in m["checks"])
     assert [recs[s]["output"] for s in ("clean", "overlap", "dedup")] == [f"out/runs/test-run/{s}" for s in ("clean", "overlap", "dedup")]
     assert (run / "clean" / "train").is_dir() and (run / "overlap" / "overlap_summary.json").is_file() and (run / "dedup" / "remove_list.csv").is_file()
-    # clean takes flags; its command carries the folder and the raw sample, and there is no generated config
-    assert recs["clean"]["command"][-4:] == ["--out", str(run / "clean"), "--input-root", "raw/sample"] and recs["clean"]["config"] is None
-    # overlap and dedup get the settings with the path keys filled in, repo-relative; every other setting is kept
+    # every stage gets the settings with the path keys filled in, repo-relative; every other setting is kept
+    cl = json.loads((run / "cfg" / "clean.json").read_text(encoding="utf-8"))
+    assert (cl["input_root"], cl["output_root"]) == ("raw/sample", "out/runs/test-run/clean") and recs["clean"]["command"][-2:] == ["--config", str(run / "cfg" / "clean.json")]
+    assert (cl["manifest_sha256"], cl["expected_parts"], cl["sample"]) == (sha(cl["manifest"]), {"train": 9, "heldout": 2}, "made up")
     ov = json.loads((run / "cfg" / "overlap.json").read_text(encoding="utf-8"))
     dd = json.loads((run / "cfg" / "dedup.json").read_text(encoding="utf-8"))
     assert (ov["inputs"], ov["out"], ov["k"], ov["floor"]) == ("out/runs/test-run/clean", "out/runs/test-run/overlap", 5, 0.5)
     assert (dd["results"], dd["inputs"], dd["out"], dd["cross_pack"]) == ("out/runs/test-run/overlap", "out/runs/test-run/clean", "out/runs/test-run/dedup", True)
-    for stage in ("overlap", "dedup"):
+    for stage in ("clean", "overlap", "dedup"):
         assert recs[stage]["config"] == f"cfg/{stage}.json" and recs[stage]["config_sha256"] == sha(run / "cfg" / f"{stage}.json")
     assert recs["overlap"]["settings_sha256"] == sha(json.loads(path.read_text(encoding="utf-8"))["stages"]["overlap"]["settings"])
     assert json.loads((run / "logs" / "clean.log").read_text(encoding="utf-8").splitlines()[-1])["input_root"] == "raw/sample"
@@ -477,7 +482,7 @@ def test_the_plan_shows_every_folder_and_command_and_runs_nothing(staged, capsys
     text = rp.plan(path)
     for line in ("run folder: out/runs/test-run", "01 clean", "02 overlap", "03 dedup", "04 apply", "05 f2", "06 survivor_loss",
                  "inputs = out/runs/test-run/clean, out = out/runs/test-run/overlap", "generated config out/runs/test-run/cfg/overlap.json",
-                 "--input-root raw/sample", "settings "):
+                 "input_root = raw/sample, manifest = ", "output_root = out/runs/test-run/clean", "settings "):
         assert line in text
     assert "shards" not in text.split("\n", 1)[1] and "07 shards" not in text
     assert not (repo / "out" / "runs").exists()  # nothing written, not even cfg/
@@ -500,3 +505,148 @@ def test_the_plan_checks_the_config_like_a_run(staged):
     with pytest.raises(rp.Stop, match="unknown stage"):
         rp.Run(path).plan("nope")
 
+
+# --- run parameters live in the config file: run_id, adopted stages, stages.clean.only, to, from ----------------------------
+def edit_config(path, **top):
+    cfg = json.loads(path.read_text(encoding="utf-8"))
+    cfg.update(top)
+    path.write_text(json.dumps(cfg), encoding="utf-8")
+
+
+def set_stage(path, stage, spec):
+    cfg = json.loads(path.read_text(encoding="utf-8"))
+    cfg["stages"][stage] = spec
+    path.write_text(json.dumps(cfg), encoding="utf-8")
+
+
+def test_run_id_in_the_config_names_the_run(staged):
+    path, repo = staged
+    edit_config(path, run_id="job-1")
+    m = rp.run(path)
+    assert m["run_id"] == "job-1" and "overrides" not in m
+    assert (repo / "out" / "runs" / "job-1" / "pipeline_manifest.json").is_file() and not (repo / "out" / "runs" / "test-run").exists()
+    assert m["config"]["run_id"] == "job-1"  # the manifest embeds the config that ran
+
+
+def test_a_run_needs_a_run_id(staged):
+    path, _ = staged
+    cfg = json.loads(path.read_text(encoding="utf-8"))
+    del cfg["run_id"]
+    path.write_text(json.dumps(cfg), encoding="utf-8")
+    with pytest.raises(rp.Stop, match="run_id is missing"):
+        rp.run(path)
+
+
+def test_an_adopted_stage_in_the_config_uses_the_folder_instead_of_running(tmp_path, staged, tsai_outputs):
+    path, repo = staged
+    prev = repo / "out" / "earlier" / "clean"
+    shutil.copytree(tsai_outputs["cleaned"], prev)
+    set_stage(path, "clean", {"mode": "adopt", "output": str(prev)})
+    m = rp.run(path)
+    run = repo / "out" / "runs" / "test-run"
+    clean = next(s for s in m["stages"] if s["stage"] == "clean")
+    assert (clean["mode"], clean["command"], clean["output"]) == ("adopt", None, "out/earlier/clean")
+    assert not (run / "clean").exists() and not (run / "logs" / "clean.log").exists() and not (run / "cfg" / "clean.json").exists()
+    assert json.loads((run / "cfg" / "overlap.json").read_text(encoding="utf-8"))["inputs"] == "out/earlier/clean"
+    assert m["totals"]["final"] == 9
+
+
+def test_clean_only_in_the_config_limits_the_clean_job_and_lets_overlap_expect_fewer_packs(staged):
+    path, repo = staged
+    part = "train/code-go/part-00000.parquet"
+    cfg = json.loads(path.read_text(encoding="utf-8"))
+    cfg["stages"]["clean"]["only"] = [part]
+    cfg["to"] = "overlap"
+    path.write_text(json.dumps(cfg), encoding="utf-8")
+    m = rp.run(path)
+    run = repo / "out" / "runs" / "test-run"
+    clean = next(s for s in m["stages"] if s["stage"] == "clean")
+    assert [s["stage"] for s in m["stages"]] == ["clean", "overlap"]
+    assert clean["only"] == [part] and clean["command"][-2:] == ["--only", part]
+    assert json.loads((run / "logs" / "clean.log").read_text(encoding="utf-8").splitlines()[-1])["only"] == [part]
+    assert json.loads((run / "cfg" / "overlap.json").read_text(encoding="utf-8"))["expected_packs"] == []
+
+
+def test_without_only_overlaps_settings_are_not_changed(staged):
+    path, repo = staged
+    edit_config(path, to="overlap")
+    rp.run(path)
+    assert "expected_packs" not in json.loads((repo / "out/runs/test-run/cfg/overlap.json").read_text(encoding="utf-8"))
+
+
+def test_only_needs_a_clean_stage_that_runs_from_settings(staged, tsai_outputs):
+    path, repo = staged
+    prev = repo / "out" / "earlier" / "clean"
+    shutil.copytree(tsai_outputs["cleaned"], prev)
+    set_stage(path, "clean", {"mode": "adopt", "output": str(prev), "only": ["train/code-go/part-00000.parquet"]})
+    with pytest.raises(rp.Stop, match="stages.clean.only limits the clean job"):
+        rp.run(path)
+
+
+def test_only_must_be_a_list_of_parts(staged):
+    path, _ = staged
+    cfg = json.loads(path.read_text(encoding="utf-8"))
+    cfg["stages"]["clean"]["only"] = "train/code-go/part-00000.parquet"
+    path.write_text(json.dumps(cfg), encoding="utf-8")
+    with pytest.raises(rp.Stop, match="stages.clean.only must be a list"):
+        rp.run(path)
+
+
+def test_to_in_the_config_stops_after_that_stage_and_checks_only_the_stages_up_to_it(staged):
+    path, repo = staged
+    cfg = json.loads(path.read_text(encoding="utf-8"))
+    del cfg["stages"]["overlap"], cfg["stages"]["dedup"]
+    cfg["to"] = "clean"
+    path.write_text(json.dumps(cfg), encoding="utf-8")
+    assert "02 overlap" not in rp.plan(path)
+    m = rp.run(path)
+    assert [s["stage"] for s in m["stages"]] == ["clean"] and m["totals"] == {"cleaned": 13}
+    edit_config(path, to="dedup", run_id="second")
+    with pytest.raises(rp.Stop, match="stages.overlap is missing"):
+        rp.run(path)
+
+
+def test_from_in_the_config_resumes_a_recorded_run(staged):
+    path, repo = staged
+    edit_config(path, to="apply")
+    first = rp.run(path)
+    assert [s["stage"] for s in first["stages"]][-1] == "apply"
+    cfg = json.loads(path.read_text(encoding="utf-8"))
+    del cfg["to"]
+    cfg["from"] = "f2"
+    path.write_text(json.dumps(cfg), encoding="utf-8")
+    m = rp.run(path)
+    assert [s["stage"] for s in m["stages"]] == ["clean", "overlap", "dedup", "apply", "f2", "survivor_loss"] and m["totals"]["final"] == 9
+
+
+def test_from_must_not_come_after_to(staged):
+    path, _ = staged
+    edit_config(path, to="clean")
+    cfg = json.loads(path.read_text(encoding="utf-8"))
+    cfg["from"] = "dedup"
+    path.write_text(json.dumps(cfg), encoding="utf-8")
+    with pytest.raises(rp.Stop, match='"from": dedup comes after "to": clean'):
+        rp.run(path)
+
+
+def test_the_plan_follows_the_config(staged, tsai_outputs):
+    path, repo = staged
+    prev = repo / "out" / "earlier" / "clean"
+    shutil.copytree(tsai_outputs["cleaned"], prev)
+    set_stage(path, "clean", {"mode": "adopt", "output": str(prev)})
+    edit_config(path, run_id="job-2", to="overlap")
+    text = rp.plan(path)
+    assert "run folder: out/runs/job-2" in text and "01 clean         adopt  out/earlier/clean" in text
+    assert "02 overlap" in text and "03 dedup" not in text
+
+
+def test_the_command_line_takes_only_config_and_plan(staged, capsys, monkeypatch):
+    path, repo = staged
+    monkeypatch.setattr(sys, "argv", ["run_pipeline.py", "--config", str(path), "--plan"])
+    rp.main()
+    assert "01 clean" in capsys.readouterr().out and not (repo / "out" / "runs").exists()
+    for flag in (["--run-id", "x"], ["--adopt", "clean=y"], ["--only", "z"], ["--to", "dedup"], ["--from", "f2"]):
+        monkeypatch.setattr(sys, "argv", ["run_pipeline.py", "--config", str(path), *flag])
+        with pytest.raises(SystemExit) as e:
+            rp.main()
+        assert e.value.code == 2  # argparse: unrecognized arguments
