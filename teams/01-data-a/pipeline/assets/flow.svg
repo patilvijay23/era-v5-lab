@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="540" viewBox="0 0 1200 540" role="img" aria-labelledby="t d">
   <title id="t">How a document travels</title>
-  <desc id="d">Six stages. Clean, overlap and dedup are TSAI jobs that the runner adopts or runs; apply, f2 and survivor loss are always run by run_pipeline.py. Duplicates leave at apply, benchmark copies at f2, the rest is the final Parquet.</desc>
+  <desc id="d">Seven stages. Clean, overlap and dedup are TSAI jobs that the runner adopts or runs; apply, f2 and survivor loss are always run by run_pipeline.py; shards is optional. Duplicates leave at apply, benchmark copies at f2, the rest is the final Parquet, which shards turns into token shards.</desc>
   <defs>
     <filter id="haze" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="80"/></filter>
     <filter id="soft" x="-200%" y="-200%" width="500%" height="500%"><feGaussianBlur stdDeviation="5"/></filter>
@@ -17,14 +17,14 @@
     .grp{font:500 11.5px 'Mono',ui-monospace,monospace;letter-spacing:.14em;fill:#7c838e}
     .idx{font:600 12px 'Mono',ui-monospace,monospace;letter-spacing:.06em}
     .name{font:600 23px 'Grotesk','Segoe UI',sans-serif;letter-spacing:-.02em;fill:#eceef1}
-    .code{font:500 12px 'Mono',ui-monospace,monospace;fill:#b8bdc6}
-    .out{font:400 12px 'Mono',ui-monospace,monospace;fill:#7c838e}
+    .code{font:500 11px 'Mono',ui-monospace,monospace;fill:#b8bdc6}
+    .out{font:400 11px 'Mono',ui-monospace,monospace;fill:#7c838e}
     .tag{font:500 11px 'Mono',ui-monospace,monospace;letter-spacing:.04em}
     .pill{font:600 15px 'Grotesk','Segoe UI',sans-serif;letter-spacing:-.01em}
     .pillsub{font:400 11.5px 'Mono',ui-monospace,monospace;fill:#8b919c}
     .note{font:400 12px 'Mono',ui-monospace,monospace;fill:#7c838e}
     .card{animation:in 1.1s cubic-bezier(.16,1,.3,1) both}
-    .c2{animation-delay:.08s}.c3{animation-delay:.16s}.c4{animation-delay:.24s}.c5{animation-delay:.32s}.c6{animation-delay:.4s}
+    .c2{animation-delay:.08s}.c3{animation-delay:.16s}.c4{animation-delay:.24s}.c5{animation-delay:.32s}.c6{animation-delay:.4s}.c7{animation-delay:.48s}
     @keyframes in{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
     @media (prefers-reduced-motion:reduce){*{animation:none!important}}
   </style>
@@ -41,91 +41,99 @@
   <text x="46" y="104" class="h">How a document travels</text>
 
   <!-- who runs what -->
-  <path d="M40 142V136H590V142" fill="none" stroke="#fff" stroke-opacity=".14"/>
+  <path d="M40 142V136H512V142" fill="none" stroke="#fff" stroke-opacity=".14"/>
   <text x="40" y="128" class="grp">TSAI JOBS  ·  ADOPTED OR RUN</text>
-  <path d="M610 142V136H1160V142" fill="none" stroke="#fff" stroke-opacity=".14"/>
-  <text x="610" y="128" class="grp">RUN_PIPELINE.PY  ·  ALWAYS RUN</text>
+  <path d="M526 142V136H998V142" fill="none" stroke="#fff" stroke-opacity=".14"/>
+  <text x="526" y="128" class="grp">RUN_PIPELINE.PY  ·  ALWAYS RUN</text>
+  <path d="M1012 142V136H1160V142" fill="none" stroke="#fff" stroke-opacity=".14" stroke-dasharray="5 4"/>
+  <text x="1012" y="128" class="grp">OPTIONAL</text>
 
-  <!-- cards: 6 × 170 wide, gap 20, from x=40 -->
+  <!-- cards: 7 × 148 wide, gap 14, from x=40 -->
   <g transform="translate(40 156)"><g class="card">
-    <rect width="170" height="164" rx="14" fill="#171a20" stroke="#fff" stroke-opacity=".07"/>
-    <text x="18" y="32" class="idx" fill="#8fc9b5">01</text>
-    <text x="18" y="66" class="name">clean</text>
-    <text x="18" y="96" class="code">spec_v1/run_clean.py</text>
-    <text x="18" y="116" class="out">→ cleaned parts</text>
-    <text x="18" y="146" class="tag" fill="#8fc9b5">#244 · spec v1</text>
+    <rect width="148" height="164" rx="14" fill="#171a20" stroke="#fff" stroke-opacity=".07"/>
+    <text x="14" y="32" class="idx" fill="#8fc9b5">01</text>
+    <text x="14" y="66" class="name">clean</text>
+    <text x="14" y="96" class="code">run_clean.py</text>
+    <text x="14" y="116" class="out">→ cleaned parts</text>
+    <text x="14" y="146" class="tag" fill="#8fc9b5">#244 · spec v1</text>
   </g></g>
-  <g transform="translate(230 156)"><g class="card c2">
-    <rect width="170" height="164" rx="14" fill="#171a20" stroke="#fff" stroke-opacity=".07"/>
-    <text x="18" y="32" class="idx" fill="#93c5e0">02</text>
-    <text x="18" y="66" class="name">overlap</text>
-    <text x="18" y="96" class="code">dedup/overlap.py</text>
-    <text x="18" y="116" class="out">→ pairs, matches</text>
-    <text x="18" y="146" class="tag" fill="#93c5e0">#255 · H1 + H2</text>
+  <g transform="translate(202 156)"><g class="card c2">
+    <rect width="148" height="164" rx="14" fill="#171a20" stroke="#fff" stroke-opacity=".07"/>
+    <text x="14" y="32" class="idx" fill="#93c5e0">02</text>
+    <text x="14" y="66" class="name">overlap</text>
+    <text x="14" y="96" class="code">dedup/overlap.py</text>
+    <text x="14" y="116" class="out">→ pairs, matches</text>
+    <text x="14" y="146" class="tag" fill="#93c5e0">#255 · H1 + H2</text>
   </g></g>
-  <g transform="translate(420 156)"><g class="card c3">
-    <rect width="170" height="164" rx="14" fill="#171a20" stroke="#fff" stroke-opacity=".07"/>
-    <text x="18" y="32" class="idx" fill="#a9b4ec">03</text>
-    <text x="18" y="66" class="name">dedup</text>
-    <text x="18" y="96" class="code">dedup/dedup.py</text>
-    <text x="18" y="116" class="out">→ remove_list.csv</text>
-    <text x="18" y="146" class="tag" fill="#a9b4ec">#255 · rules 0–4</text>
+  <g transform="translate(364 156)"><g class="card c3">
+    <rect width="148" height="164" rx="14" fill="#171a20" stroke="#fff" stroke-opacity=".07"/>
+    <text x="14" y="32" class="idx" fill="#a9b4ec">03</text>
+    <text x="14" y="66" class="name">dedup</text>
+    <text x="14" y="96" class="code">dedup/dedup.py</text>
+    <text x="14" y="116" class="out">→ remove_list.csv</text>
+    <text x="14" y="146" class="tag" fill="#a9b4ec">#255 · rules 0–4</text>
   </g></g>
-  <g transform="translate(610 156)"><g class="card c4">
-    <rect width="170" height="164" rx="14" fill="#1a1d24" stroke="#c3aee8" stroke-opacity=".28"/>
-    <text x="18" y="32" class="idx" fill="#c3aee8">04</text>
-    <text x="18" y="66" class="name">apply</text>
-    <text x="18" y="96" class="code">apply_dedup.py</text>
-    <text x="18" y="116" class="out">→ deduped/</text>
-    <text x="18" y="146" class="tag" fill="#c3aee8">new</text>
+  <g transform="translate(526 156)"><g class="card c4">
+    <rect width="148" height="164" rx="14" fill="#1a1d24" stroke="#c3aee8" stroke-opacity=".28"/>
+    <text x="14" y="32" class="idx" fill="#c3aee8">04</text>
+    <text x="14" y="66" class="name">apply</text>
+    <text x="14" y="96" class="code">apply_dedup.py</text>
+    <text x="14" y="116" class="out">→ deduped/</text>
+    <text x="14" y="146" class="tag" fill="#c3aee8">new</text>
   </g></g>
-  <g transform="translate(800 156)"><g class="card c5">
-    <rect width="170" height="164" rx="14" fill="#171a20" stroke="#fff" stroke-opacity=".07"/>
-    <text x="18" y="32" class="idx" fill="#e8b4c4">05</text>
-    <text x="18" y="66" class="name">f2</text>
-    <text x="18" y="96" class="code">spec_v1/run_f2.py</text>
-    <text x="18" y="116" class="out">→ final/, *.f2.json</text>
-    <text x="18" y="146" class="tag" fill="#e8b4c4">#35 · G9 set v2</text>
+  <g transform="translate(688 156)"><g class="card c5">
+    <rect width="148" height="164" rx="14" fill="#171a20" stroke="#fff" stroke-opacity=".07"/>
+    <text x="14" y="32" class="idx" fill="#e8b4c4">05</text>
+    <text x="14" y="66" class="name">f2</text>
+    <text x="14" y="96" class="code">spec_v1/run_f2.py</text>
+    <text x="14" y="116" class="out">→ final/, f2.json</text>
+    <text x="14" y="146" class="tag" fill="#e8b4c4">#35 · G9 set v2</text>
   </g></g>
-  <g transform="translate(990 156)"><g class="card c6">
-    <rect width="170" height="164" rx="14" fill="#1a1d24" stroke="#edcb9a" stroke-opacity=".28"/>
-    <text x="18" y="32" class="idx" fill="#edcb9a">06</text>
-    <text x="18" y="66" class="name">survivor</text>
-    <text x="18" y="96" class="code">survivor_loss.py</text>
-    <text x="18" y="116" class="out">→ lost groups</text>
-    <text x="18" y="146" class="tag" fill="#edcb9a">new</text>
+  <g transform="translate(850 156)"><g class="card c6">
+    <rect width="148" height="164" rx="14" fill="#1a1d24" stroke="#edcb9a" stroke-opacity=".28"/>
+    <text x="14" y="32" class="idx" fill="#edcb9a">06</text>
+    <text x="14" y="66" class="name">survivor</text>
+    <text x="14" y="96" class="code">survivor_loss.py</text>
+    <text x="14" y="116" class="out">→ lost groups</text>
+    <text x="14" y="146" class="tag" fill="#edcb9a">new</text>
+  </g></g>
+  <g transform="translate(1012 156)"><g class="card c7">
+    <rect width="148" height="164" rx="14" fill="#1a1d24" stroke="#b4d98a" stroke-opacity=".28" stroke-dasharray="5 4"/>
+    <text x="14" y="32" class="idx" fill="#b4d98a">07</text>
+    <text x="14" y="66" class="name">shards</text>
+    <text x="14" y="96" class="code">run_shards.py</text>
+    <text x="14" y="116" class="out">→ .bin, manifest</text>
+    <text x="14" y="146" class="tag" fill="#b4d98a">new · optional</text>
   </g></g>
 
   <!-- stems and the line -->
   <g stroke="#fff" stroke-opacity=".12">
-    <path d="M125 320V372"/><path d="M315 320V372"/><path d="M505 320V372"/><path d="M695 320V372"/><path d="M885 320V372"/><path d="M1075 320V372"/>
+    <path d="M114 320V372"/><path d="M276 320V372"/><path d="M438 320V372"/><path d="M600 320V372"/><path d="M762 320V372"/><path d="M924 320V372"/><path d="M1086 320V372"/>
   </g>
   <path d="M40 372H1160" stroke="url(#line)" stroke-width="1.5"/>
   <!-- exits, curved -->
-  <path d="M655 372C695 372 695 372 695 412V430" fill="none" stroke="#e8a0a8" stroke-opacity=".45" stroke-width="1.5"/>
-  <path d="M845 372C885 372 885 372 885 412V430" fill="none" stroke="#e6c08f" stroke-opacity=".45" stroke-width="1.5"/>
-  <path d="M1035 372C1075 372 1075 372 1075 412V430" fill="none" stroke="#8fc9b5" stroke-opacity=".45" stroke-width="1.5"/>
+  <path d="M560 372C600 372 600 372 600 412V430" fill="none" stroke="#e8a0a8" stroke-opacity=".45" stroke-width="1.5"/>
+  <path d="M722 372C762 372 762 372 762 412V430" fill="none" stroke="#e6c08f" stroke-opacity=".45" stroke-width="1.5"/>
+  <path d="M1046 372C1086 372 1086 372 1086 412V430" fill="none" stroke="#8fc9b5" stroke-opacity=".45" stroke-width="1.5"/>
   <g fill="#111317" stroke-width="1.5">
-    <circle cx="125" cy="372" r="4.5" stroke="#8fc9b5"/><circle cx="315" cy="372" r="4.5" stroke="#93c5e0"/>
-    <circle cx="505" cy="372" r="4.5" stroke="#a9b4ec"/><circle cx="695" cy="372" r="4.5" stroke="#c3aee8"/>
-    <circle cx="885" cy="372" r="4.5" stroke="#e8b4c4"/><circle cx="1075" cy="372" r="4.5" stroke="#edcb9a"/>
+    <circle cx="114" cy="372" r="4.5" stroke="#8fc9b5"/><circle cx="276" cy="372" r="4.5" stroke="#93c5e0"/><circle cx="438" cy="372" r="4.5" stroke="#a9b4ec"/><circle cx="600" cy="372" r="4.5" stroke="#c3aee8"/><circle cx="762" cy="372" r="4.5" stroke="#e8b4c4"/><circle cx="924" cy="372" r="4.5" stroke="#edcb9a"/><circle cx="1086" cy="372" r="4.5" stroke="#b4d98a"/>
   </g>
 
   <!-- outcomes -->
-  <g transform="translate(610 432)">
-    <rect width="170" height="64" rx="32" fill="#e8a0a8" fill-opacity=".08" stroke="#e8a0a8" stroke-opacity=".35"/>
-    <text x="85" y="29" class="pill" text-anchor="middle" fill="#f0c3c8">removed</text>
-    <text x="85" y="48" class="pillsub" text-anchor="middle">duplicates</text>
+  <g transform="translate(526 432)">
+    <rect width="148" height="64" rx="32" fill="#e8a0a8" fill-opacity=".08" stroke="#e8a0a8" stroke-opacity=".35"/>
+    <text x="74" y="29" class="pill" text-anchor="middle" fill="#f0c3c8">removed</text>
+    <text x="74" y="48" class="pillsub" text-anchor="middle">duplicates</text>
   </g>
-  <g transform="translate(800 432)">
-    <rect width="170" height="64" rx="32" fill="#e6c08f" fill-opacity=".08" stroke="#e6c08f" stroke-opacity=".35"/>
-    <text x="85" y="29" class="pill" text-anchor="middle" fill="#f1d6b2">dropped</text>
-    <text x="85" y="48" class="pillsub" text-anchor="middle">benchmark copies</text>
+  <g transform="translate(688 432)">
+    <rect width="148" height="64" rx="32" fill="#e6c08f" fill-opacity=".08" stroke="#e6c08f" stroke-opacity=".35"/>
+    <text x="74" y="29" class="pill" text-anchor="middle" fill="#f1d6b2">dropped</text>
+    <text x="74" y="48" class="pillsub" text-anchor="middle">benchmark copies</text>
   </g>
-  <g transform="translate(990 432)">
-    <rect width="170" height="64" rx="32" fill="#8fc9b5" fill-opacity=".09" stroke="#8fc9b5" stroke-opacity=".4"/>
-    <text x="85" y="29" class="pill" text-anchor="middle" fill="#c2e5d8">kept</text>
-    <text x="85" y="48" class="pillsub" text-anchor="middle">final parquet</text>
+  <g transform="translate(1012 432)">
+    <rect width="148" height="64" rx="32" fill="#8fc9b5" fill-opacity=".09" stroke="#8fc9b5" stroke-opacity=".4"/>
+    <text x="74" y="29" class="pill" text-anchor="middle" fill="#c2e5d8">kept</text>
+    <text x="74" y="48" class="pillsub" text-anchor="middle">final → shards</text>
   </g>
   <text x="48" y="458" class="note">each stage must account for every</text>
   <text x="48" y="478" class="note">document it was given, or the run stops</text>
@@ -133,19 +141,19 @@
   <!-- documents: slow, soft; most are kept, some leave early -->
   <g>
     <g><circle r="9" fill="#d8f0e6" opacity=".25" filter="url(#soft)"/><circle r="2.5" fill="#eaf7f1"/>
-      <animateMotion dur="9s" repeatCount="indefinite" path="M40 372H1035C1075 372 1075 372 1075 412V430"/>
+      <animateMotion dur="9s" repeatCount="indefinite" path="M40 372H1046C1086 372 1086 372 1086 412V430"/>
       <animate attributeName="opacity" dur="9s" repeatCount="indefinite" values="0;1;1;0" keyTimes="0;.06;.9;1"/></g>
     <g><circle r="9" fill="#f4d3d7" opacity=".25" filter="url(#soft)"/><circle r="2.5" fill="#fbe7e9"/>
-      <animateMotion dur="6.6s" begin="2.2s" repeatCount="indefinite" path="M40 372H655C695 372 695 372 695 412V430"/>
+      <animateMotion dur="6.6s" begin="2.2s" repeatCount="indefinite" path="M40 372H560C600 372 600 372 600 412V430"/>
       <animate attributeName="opacity" dur="6.6s" begin="2.2s" repeatCount="indefinite" values="0;1;1;0" keyTimes="0;.08;.88;1"/></g>
     <g><circle r="9" fill="#d8f0e6" opacity=".25" filter="url(#soft)"/><circle r="2.5" fill="#eaf7f1"/>
-      <animateMotion dur="9s" begin="3.6s" repeatCount="indefinite" path="M40 372H1035C1075 372 1075 372 1075 412V430"/>
+      <animateMotion dur="9s" begin="3.6s" repeatCount="indefinite" path="M40 372H1046C1086 372 1086 372 1086 412V430"/>
       <animate attributeName="opacity" dur="9s" begin="3.6s" repeatCount="indefinite" values="0;1;1;0" keyTimes="0;.06;.9;1"/></g>
     <g><circle r="9" fill="#f6e3c8" opacity=".25" filter="url(#soft)"/><circle r="2.5" fill="#fbf0e0"/>
-      <animateMotion dur="7.8s" begin="5.2s" repeatCount="indefinite" path="M40 372H845C885 372 885 372 885 412V430"/>
+      <animateMotion dur="7.8s" begin="5.2s" repeatCount="indefinite" path="M40 372H722C762 372 762 372 762 412V430"/>
       <animate attributeName="opacity" dur="7.8s" begin="5.2s" repeatCount="indefinite" values="0;1;1;0" keyTimes="0;.07;.89;1"/></g>
     <g><circle r="9" fill="#d8f0e6" opacity=".25" filter="url(#soft)"/><circle r="2.5" fill="#eaf7f1"/>
-      <animateMotion dur="9s" begin="6.8s" repeatCount="indefinite" path="M40 372H1035C1075 372 1075 372 1075 412V430"/>
+      <animateMotion dur="9s" begin="6.8s" repeatCount="indefinite" path="M40 372H1046C1086 372 1086 372 1086 412V430"/>
       <animate attributeName="opacity" dur="9s" begin="6.8s" repeatCount="indefinite" values="0;1;1;0" keyTimes="0;.06;.9;1"/></g>
   </g>
 </svg>

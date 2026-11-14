@@ -254,3 +254,14 @@ def test_no_record_when_the_remove_list_changed_after_apply(run):
         f.write("code-go,train,code-go/part-00000.parquet,1,x\n")
     with pytest.raises(provenance.Stop, match="changed after apply used it"):
         provenance.processing_record(run / "pipeline_manifest.json")
+
+
+def test_the_record_follows_the_output_the_manifest_recorded_for_a_stage(run):
+    """A config may leave a stage's output to the default, so the config has no `output`: the stage's record names it."""
+    m = run / "pipeline_manifest.json"
+    data = json.loads(m.read_text(encoding="utf-8"))
+    expected = provenance.processing_record(m)
+    for stage in ("clean", "overlap", "dedup"):
+        del data["config"]["stages"][stage]["output"]
+    m.write_text(json.dumps(data), encoding="utf-8")
+    assert provenance.processing_record(m) == expected

@@ -21,8 +21,14 @@ STAGES
                  added to the manifest afterwards. The stage stops the run if a part failed or was skipped, if no shard was
                  written, or if the summary is not this run's. --from shards runs only this stage, into an out folder without shards.
 
-clean, overlap and dedup take "mode": "adopt" (TSAI ran the job; "output" names the folder it returned) or "mode": "run"
-("command": the script and its arguments, run with this Python from the repository root; "output": where that script writes).
+clean, overlap and dedup take "mode": "adopt" (TSAI ran the job; "output" names the folder it returned) or "mode": "run".
+A run stage names a "settings" file (settings only, no paths) and the runner works out the rest: its folder is <run>/<stage>
+(or "output", below ./out), it reads the previous stage's folder, and stage_args.py turns that into the script's command. clean
+gets flags (--config, --out, and --input-root from "input"); overlap and dedup get a copy of the settings with their path keys
+filled in, written to <run>/cfg/<stage>.json. "script" replaces the default script; "settings_sha256" pins the settings file
+(checked, and the manifest records the file's sha256 either way). Escape hatch: "command" (the script and its arguments, run
+with this Python from the repository root) with "output" (where that script writes) skips all of this.
+--plan checks the config and prints each stage's folder and command, without running or writing anything.
 apply, f2 and survivor_loss always run. f2 takes "script" (default teams/01-data-a/spec_v1/run_f2.py) and "workers"
 (default 1; each run_f2.py process loads G9's full set, about 1.1 GB of memory, so N workers need about N × 1.1 GB plus the
 documents in flight). shards takes "tokenizer" (required: G3's C3 tokenizer.json), and optionally "script" (default
@@ -64,6 +70,8 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[2]
+sys.path.insert(0, str(HERE))
+import stage_args  # noqa: E402  (how clean, overlap and dedup get their paths)
 STAGES = ("clean", "overlap", "dedup", "apply", "f2", "survivor_loss", "shards")
 OPTIONAL = ("shards",)  # runs only when stages.shards is configured
 EXTERNAL = ("clean", "overlap", "dedup")
@@ -72,6 +80,7 @@ NEEDED = {"overlap": ("overlap_summary.json", "overlap_matches.csv", "overlap_do
 DEFAULT_F2 = "teams/01-data-a/spec_v1/run_f2.py"
 DEFAULT_SHARDS = "teams/01-data-a/shards/run_shards.py"
 SPLITS = ("train", "heldout")
+RESERVED = ("deduped", "final", "report", "shards", "cfg", "logs")  # folders of the run that no stage output may take
 VOLATILE = {"seconds", "input", "path", "cleaned", "skipped"}  # JSON fields that differ between identical runs
 
 
@@ -175,39 +184,75 @@ class Run:
 
     def output(self, stage):
         if stage in EXTERNAL:
-            return path(self.stages[stage]["output"])
+            spec = self.stages.get(stage) or {}
+            return path(spec["output"]) if spec.get("output") else self.dir / stage  # default: inside the run folder
         if stage == "shards":
             return path(self.stages["shards"]["out"]) if self.stages.get("shards", {}).get("out") else self.dir / "shards"
         return self.dir / {"apply": "deduped", "f2": "final", "survivor_loss": "report"}[stage]
+
+    def shown(self, p):
+        """A path as the manifest and the plan show it: relative to the repository when inside it, else absolute."""
+        p = Path(p).resolve()
+        try:
+            return p.relative_to(REPO.resolve()).as_posix()
+        except ValueError:
+            return p.as_posix()
+
+    def stage_command(self, stage, write):
+        """None for an adopted stage; else {command, settings, settings_sha256, config, config_sha256} (stage_args.build, or the
+        run config's own "command"). write=False checks and names the generated config without writing it."""
+        spec = self.stages[stage]
+        if spec.get("mode", "adopt") != "run":
+            return None
+        if spec.get("command"):
+            return {"command": spec["command"], "settings": None, "settings_sha256": None, "config": None, "config_sha256": None}
+        try:
+            return stage_args.build(stage, spec, {s: self.output(s) for s in EXTERNAL}, self.dir / "cfg", REPO, write)
+        except stage_args.ConfigError as e:
+            raise Stop(f"config: {stage}: {e}")
 
     def validate(self, upto):
         """The whole config, before anything runs."""
         for stage in EXTERNAL:
             spec = self.stages.get(stage)
-            if not isinstance(spec, dict) or not spec.get("output"):
-                raise Stop(f"config: stages.{stage}.output is missing")
+            if not isinstance(spec, dict):
+                raise Stop(f"config: stages.{stage} is missing")
             mode = spec.get("mode", "adopt")
             if mode not in ("adopt", "run"):
                 raise Stop(f"config: stages.{stage}.mode is {mode!r}, expected adopt or run")
+            if mode == "adopt" and not spec.get("output"):
+                raise Stop(f"config: stages.{stage}.output is missing (an adopted stage needs the folder that was returned)")
             if mode == "run":
                 cmd = spec.get("command")
-                if not cmd or not isinstance(cmd, list):
+                if "command" in spec and (not cmd or not isinstance(cmd, list)):
                     raise Stop(f"config: stages.{stage}.command (a list: script, then arguments) is missing for mode run")
-                if not path(cmd[0]).is_file():
+                if cmd and not spec.get("output"):
+                    raise Stop(f"config: stages.{stage}.output is missing: with a command, say where it writes")
+                if cmd and not path(cmd[0]).is_file():
                     raise Stop(f"config: stages.{stage}.command script {cmd[0]} not found")
+                script = spec.get("script", stage_args.DEFAULT_SCRIPT.get(stage))
+                if not cmd and script and not path(script).is_file():
+                    raise Stop(f"config: stages.{stage} script {script} not found")
+                self.stage_command(stage, write=False)
         workers = self.stages.get("f2", {}).get("workers", 1)
         if not isinstance(workers, int) or isinstance(workers, bool) or workers < 1:
             raise Stop(f"config: stages.f2.workers is {workers!r}, expected a whole number >= 1")
         if STAGES.index(upto) >= STAGES.index("f2"):
             script = self.stages.get("f2", {}).get("script", DEFAULT_F2)
             if not path(script).is_file():
-                raise Stop(f"config: f2 script {script} not found (run_f2.py is in PR #35; set stages.f2.script)")
+                raise Stop(f"config: f2 script {script} not found (run_f2.py is teams/01-data-a/spec_v1/run_f2.py; set stages.f2.script)")
         if "shards" in self.stages or upto == "shards":
             self.validate_shards(upto)
-        for stage in EXTERNAL:
-            o, r = self.output(stage).resolve(), self.dir.resolve()
-            if o == r or r in o.parents or o in r.parents:
+        outs = {stage: self.output(stage).resolve() for stage in EXTERNAL}
+        r = self.dir.resolve()
+        for stage, o in outs.items():
+            if o == r or o in r.parents:
                 raise Stop(f"config: stages.{stage}.output and the run folder {self.dir} overlap")
+            if r in o.parents and o.relative_to(r).parts[0] in RESERVED:
+                raise Stop(f"config: stages.{stage}.output {o} is a folder of the run itself ({', '.join(RESERVED)})")
+        for a, b in [(a, b) for i, a in enumerate(EXTERNAL) for b in EXTERNAL[i + 1:]]:
+            if outs[a] == outs[b] or outs[a] in outs[b].parents or outs[b] in outs[a].parents:
+                raise Stop(f"config: stages.{a}.output and stages.{b}.output overlap")
 
     def validate_shards(self, upto):
         spec = self.stages.get("shards")
@@ -229,6 +274,38 @@ class Run:
         if spec.get("pack_table") and not path(spec["pack_table"]).is_file():
             raise Stop(f"config: stages.shards.pack_table {spec['pack_table']} not found")
 
+    def plan(self, to=None):
+        """What a run would do, as text: each stage's mode, output folder and command, with every path resolved. The config is
+        checked first, as for a run; nothing is run or written."""
+        to = to or (STAGES[-1] if "shards" in self.stages else "survivor_loss")
+        if to not in STAGES:
+            raise Stop(f"unknown stage {to!r}; stages are {', '.join(STAGES)}")
+        self.validate(to)
+        lines = [f"run folder: {self.shown(self.dir)}   manifest: {self.shown(self.manifest_path)}"]
+        for n, stage in enumerate(STAGES[: STAGES.index(to) + 1], start=1):
+            out = self.shown(self.output(stage))
+            if stage in EXTERNAL:
+                built = self.stage_command(stage, write=False)
+                if built is None:
+                    lines.append(f"{n:02d} {stage:13} adopt  {out}")
+                    continue
+                lines.append(f"{n:02d} {stage:13} run    {out}")
+                lines.append("     $ python -I " + " ".join(built["command"]).replace(str(REPO) + "/", ""))
+                if built["settings"]:
+                    lines.append(f"     settings {built['settings']} (sha256 {built['settings_sha256'][:12]}…)")
+                if built["config"]:
+                    lines.append(f"     generated config {self.shown(built['config'])}: " + ", ".join(
+                        f"{k} = {v}" for k, v in stage_args.generated_values(stage, {s: self.output(s) for s in EXTERNAL}, REPO).items()))
+            elif stage == "f2":
+                f2 = self.stages.get("f2", {})
+                lines.append(f"{n:02d} {stage:13} run    {out}   {f2.get('script', DEFAULT_F2)}, workers {f2.get('workers', 1)}")
+            elif stage == "shards":
+                spec = self.stages["shards"]
+                lines.append(f"{n:02d} {stage:13} run    {out}   {spec.get('script', DEFAULT_SHARDS)}, tokenizer {spec['tokenizer']}")
+            else:
+                lines.append(f"{n:02d} {stage:13} run    {out}")
+        return "\n".join(lines)
+
     def check(self, name, ok, detail):
         self.checks.append({"check": name, "ok": bool(ok), "detail": detail})
         if not ok:
@@ -238,7 +315,8 @@ class Run:
     def stage_external(self, stage):
         spec = self.stages[stage]
         mode = spec.get("mode", "adopt")
-        command = spec.get("command") if mode == "run" else None
+        built = self.stage_command(stage, write=True)
+        command = built["command"] if built else None
         if command:
             log = self.dir / "logs" / f"{stage}.log"
             rc = run_script(command[0], command[1:], stage, log)
@@ -249,8 +327,13 @@ class Run:
             if not (out / name).is_file():
                 raise Stop(f"{stage}: {out} has no {name}")
         counts = getattr(self, f"counts_{stage}")(out)
-        return {"mode": mode, "command": command, "code_sha256": sha256(path(command[0])) if command else None,
-                "output": spec["output"], "counts": counts}
+        rec = {"mode": mode, "command": command, "code_sha256": sha256(path(command[0])) if command else None,
+               "output": self.shown(out), "counts": counts}
+        if built and built["settings"]:  # a stage run from a settings file: which file, and the config it was run with
+            rec.update(settings=built["settings"], settings_sha256=built["settings_sha256"],
+                       config=Path(built["config"]).relative_to(self.dir).as_posix() if built["config"] else None,
+                       config_sha256=built["config_sha256"])
+        return rec
 
     def counts_clean(self, out):
         return parquet_rows(out)
@@ -519,13 +602,21 @@ def run(config, start=None, to=None):
     return Run(config).execute(start, to)
 
 
+def plan(config, to=None):
+    return Run(config).plan(to)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--config", type=Path, required=True, help="pipeline JSON config")
     ap.add_argument("--from", dest="start", choices=STAGES, help="first stage to run (earlier ones must be recorded)")
     ap.add_argument("--to", choices=STAGES, help="last stage to run")
+    ap.add_argument("--plan", action="store_true", help="check the config and print every stage's folder and command; run nothing")
     args = ap.parse_args()
     try:
+        if args.plan:
+            print(plan(args.config, args.to))
+            return
         m = run(args.config, args.start, args.to)
     except Stop as e:
         sys.exit(f"run_pipeline: {e}")

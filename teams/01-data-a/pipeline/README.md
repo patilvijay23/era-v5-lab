@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/hero.svg" width="100%" alt="Data A Pipeline: clean, overlap, dedup, apply, f2, survivor loss">
+  <img src="assets/hero.svg" width="100%" alt="Data A Pipeline: clean, overlap, dedup, apply, f2, survivor loss, shards">
 </p>
 
 <p align="center">
@@ -15,7 +15,7 @@ The **Clean → Dedup → F2** pipeline of Data A, as one command. It chains the
 | **Order** | clean → overlap → dedup → **apply the remove list** → **F2** → **survivor loss** → **shards** (optional) |
 | **In** | the cleaned parts (`train/`, `heldout/`) and the outputs of overlap and dedup |
 | **Out** | filtered Parquet in the same layout, same schema, unchanged text · `pipeline_manifest.json` |
-| **New here** | `apply_dedup.py` · `survivor_loss.py` · `run_pipeline.py` · `pipeline.json` · 69 tests |
+| **New here** | `apply_dedup.py` · `survivor_loss.py` · `run_pipeline.py` · `pipeline.json` · `stage_args.py` · 92 tests |
 | **Reused, never copied** | `spec_v1/run_clean.py` (#244) · `dedup/overlap.py`, `dedup/dedup.py` (#255) · `spec_v1/run_f2.py` (#35) |
 | **Needs** | Python 3.9+ with `pyarrow`; `pytest` for the tests |
 
@@ -29,6 +29,9 @@ The **Clean → Dedup → F2** pipeline of Data A, as one command. It chains the
 ```bash
 # tests: synthetic data only, about 15 s
 python -m pytest teams/01-data-a/pipeline/tests -q
+
+# what a run would do (every stage's folder and command; runs and writes nothing)
+python -I teams/01-data-a/pipeline/run_pipeline.py --config teams/01-data-a/pipeline/pipeline.json --plan
 
 # the whole chain, from the repository root
 python -I teams/01-data-a/pipeline/run_pipeline.py --config teams/01-data-a/pipeline/pipeline.json
@@ -52,16 +55,19 @@ Exit code `0`: every check passed. Exit code `1`: a check failed, and the messag
 
 ## How a document travels
 
-<p align="center"><img src="assets/flow.svg" width="100%" alt="Six stages; duplicates leave at apply, benchmark copies at f2, the rest is kept"></p>
+<p align="center"><img src="assets/flow.svg" width="100%" alt="Seven stages (shards optional); duplicates leave at apply, benchmark copies at f2, the rest is kept"></p>
 
 | | Stage | Script | From | Reads | Writes |
 |:-:|---|---|---|---|---|
 | 01 | **clean** | `spec_v1/run_tokenizer_sample.py` (`run_clean.py` inside) | #244 | raw parts | `train/**.parquet`, `heldout/**.parquet` |
-| 02 | **overlap** | `dedup/overlap.py --config overlap.json` | #255 | cleaned parts | `overlap_summary.json`, `overlap_matches.csv`, `overlap_docs.parquet` |
-| 03 | **dedup** | `dedup/dedup.py --config dedup.json` | #255 | overlap outputs | `remove_list.csv`, `dedup_groups.csv`, `dedup_summary.json` |
+| 02 | **overlap** | `dedup/overlap.py --config <run>/cfg/overlap.json` | #255 | cleaned parts | `overlap_summary.json`, `overlap_matches.csv`, `overlap_docs.parquet` |
+| 03 | **dedup** | `dedup/dedup.py --config <run>/cfg/dedup.json` | #255 | overlap outputs | `remove_list.csv`, `dedup_groups.csv`, `dedup_summary.json` |
 | 04 | **apply** | `pipeline/apply_dedup.py` | new | cleaned parts + `remove_list.csv` | `deduped/<split>/<part>`, `apply_dedup_summary.json` |
 | 05 | **f2** | `spec_v1/run_f2.py`, per split, or per pack in parallel | #35 | `deduped/<split>` | `final/<split>/<part>`, `<part>.f2.json`, `f2_summary.json` |
 | 06 | **survivor loss** | `pipeline/survivor_loss.py` | new | `dedup_groups.csv` + F2 reports | `survivor_loss.csv`, `survivor_loss_summary.json` |
+| 07 | **shards** (optional) | `shards/run_shards.py` → `shard_writer.py`, after `cleaning_pipeline.json` is written | new | `final/<split>/<part>` + the manifest | `shards/<pack>-<split>-NNNNNN.{bin,idx.npy,docs.parquet,json,quality_report.json}`, `shards_summary.json` |
+
+Without `stages.shards` the run stops after survivor loss. In **run** mode each stage gets its folder and its script's paths from the run config (`settings`; see Configuration), and `--plan` prints them.
 
 <details>
 <summary><b>The same flow, with every file</b></summary>
@@ -78,11 +84,12 @@ flowchart LR
     dedup["03 dedup<br/>dedup.py · #255"]:::tsai
   end
 
-  subgraph RUNNER["run_pipeline.py · always run"]
+  subgraph RUNNER["run_pipeline.py · always run, shards optional"]
     direction LR
     apply["04 apply<br/>apply_dedup.py"]:::mine
     f2["05 f2 · per split<br/>run_f2.py · #35"]:::mine
     loss["06 survivor loss<br/>survivor_loss.py"]:::mine
+    shards["07 shards · optional<br/>run_shards.py"]:::mine
   end
 
   raw --> clean -->|"cleaned"| overlap
@@ -94,6 +101,9 @@ flowchart LR
   dedup -.->|"groups"| loss
   f2 ==> final[("final<br/>parquet")]:::out
   loss ==> man[["pipeline_manifest.json"]]:::out
+  f2 -.->|"final/"| shards
+  man -.->|"stages, checks"| shards
+  shards ==> tokens[("shards<br/>.bin + manifest")]:::out
 
   classDef data fill:#16191f,stroke:#5f6670,color:#e6e8ec
   classDef tsai fill:#14211d,stroke:#8fc9b5,color:#dff2ea
@@ -160,6 +170,8 @@ The manifest's `totals` carry the headline: `cleaned → removed_by_dedup → dr
 | Survivor loss saw every dedup group; F2 covered every part holding a survivor | runner · survivor | `survivor loss saw every dedup group` · `… F2 did not cover them` |
 | With `--from`, earlier outputs still match their recorded digest | runner | `… changed after the manifest recorded it; rerun from …` |
 | The whole config before the first stage | runner | `config: stages.dedup.output is missing` · `f2 script … not found` |
+| A run stage's settings file exists and matches its pin; its output is below `out/`, not a folder of the run, not another stage's | runner (config) | `config: overlap: … pins …` · `… named subfolder …` · `… is a folder of the run itself` · `stages.clean.output and stages.overlap.output overlap` |
+| Shards: no part failed or was skipped, `run_shards.py` exited 0, at least one shard written, the summary is this run's | runner | `shards: no part failed or was skipped` · `shards: the summary is this run's, made with this run's cleaning_pipeline.json` |
 
 </details>
 
@@ -206,9 +218,13 @@ A document whose F2 check raised an error is also kept out of the output, so it 
 
 | Key | Values | Meaning |
 |---|---|---|
-| `stages.<clean · overlap · dedup>.mode` | `adopt` (default) · `run` | **adopt**: TSAI ran it, and `output` is the folder it returned. **run**: the runner calls `command` |
-| `stages.<…>.command` | `["script.py", "--arg", "…"]` | run with this Python from the repository root; `output` is where that script writes |
-| `stages.<…>.output` | folder | where the stage's files are, in both modes |
+| `stages.<clean · overlap · dedup>.mode` | `adopt` (default) · `run` | **adopt**: TSAI ran it, and `output` is the folder it returned. **run**: the runner runs the stage's script |
+| `stages.<…>.settings` | file | **run**: the stage's settings (no paths). The runner works out the rest: clean gets `--config`, `--out` and `--input-root`; overlap and dedup get a copy with their path keys filled in, in `<run>/cfg/<stage>.json` |
+| `stages.clean.input` | folder | the raw sample, passed as `--input-root` (leave it out and the job config's own `input_root` applies) |
+| `stages.<…>.settings_sha256` | sha256 | optional pin of the settings file, checked before anything runs; the manifest records the file's sha256 either way |
+| `stages.<…>.script` | path | replaces the stage's default script (`run_tokenizer_sample.py`, `dedup/overlap.py`, `dedup/dedup.py`) |
+| `stages.<…>.output` | folder | **adopt**: required, the folder returned. **run**: optional, default `<run>/<stage>`; must be below `out/` and not a folder name of the run (`deduped`, `final`, `report`, `shards`, `cfg`, `logs`) |
+| `stages.<…>.command` | `["script.py", "--arg", "…"]` | escape hatch for **run**: run this Python from the repository root as it is (then `output` is required, and no settings or generated config are involved) |
 | `stages.f2.script` | path | `run_f2.py` (default `teams/01-data-a/spec_v1/run_f2.py`, from #35) |
 | `stages.f2.workers` | whole number ≥ 1 (default 1) | **1**: one `run_f2.py` per split. **N > 1**: up to N processes at once, one per pack folder, with one log per pack |
 | `stages.shards.tokenizer` | file | G3's C3 `tokenizer.json`. Setting `stages.shards` adds the shard stage after survivor loss; without it the run stops there |
@@ -368,14 +384,15 @@ Smoke run on 13 Nov: a Windows laptop, one process, two packs of cleaned sample 
 ## Tests
 
 ```bash
-python -m pytest teams/01-data-a/pipeline/tests -q      # 69 passed
+python -m pytest teams/01-data-a/pipeline/tests -q      # 92 passed
 ```
 
 | File | Tests | Covers |
 |---|:-:|---|
 | `test_apply_dedup.py` | 25 | exact removal · byte copies · hard links (and `--copy`) · the same doc_id in two parts · Windows `\` paths · 8 bad lists, each with the bad row in the last part processed and nothing written · an unreadable or column-less part · row-group boundaries, with zstd kept · stale outputs · a corrupted output redone on rerun · train-only · resume · no text in the summary · CLI |
 | `test_survivor_loss.py` | 9 | lost · partly hit · untouched · without survivor · split + part + doc_id matching · F2 errors count as dropped · no drops · an uncovered part · mixed fingerprint sets · CLI |
-| `test_run_pipeline.py` | 35 | the full chain (13 → 11 → 9) · parallel F2 gives the same result as one process · a crashed pack is named and a rerun recovers · bad `workers` values · identical runs give identical digests · `--from` keeps earlier checks · a changed adopted folder · dedup from another overlap run · overlap of other parts · count mismatch · held-out removed · F2 errors · F2 that read other files · stale F2 output · train-only · `run` mode success and failure · a bad config stopped before anything runs · CLI |
+| `test_stage_args.py` | 14 | the command each stage script gets: flags for clean, a generated config for overlap and dedup (path keys filled in, other settings kept) · the settings pin · outputs outside `out/` or the repository refused |
+| `test_run_pipeline.py` | 44 | the full chain (13 → 11 → 9) · parallel F2 gives the same result as one process · a crashed pack is named and a rerun recovers · bad `workers` values · identical runs give identical digests · `--from` keeps earlier checks · a changed adopted folder · dedup from another overlap run · overlap of other parts · count mismatch · held-out removed · F2 errors · F2 that read other files · stale F2 output · train-only · `run` mode success and failure · a bad config stopped before anything runs · CLI |
 
 The data is made up inside the tests (`conftest.py`), in dedup's real formats (`G000001` group ids, rule numbers 0–4). The runner's tests use `tests/fake_run_f2.py`, a stand-in with `run_f2.py`'s command line, its output files and its exit codes. The real F2 needs G9's full set (about 1.1 GB) and is tested in its own PR, and on real data above.
 

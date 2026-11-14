@@ -20,6 +20,7 @@ import run_pipeline as rp
 
 FAKE_F2 = Path(__file__).resolve().parent / "fake_run_f2.py"
 FAKE_SHARDS = Path(__file__).resolve().parent / "fake_run_shards.py"
+FAKE_STAGE = Path(__file__).resolve().parent / "fake_stage.py"
 GROUP_HEADER = ["group_id", "group_size", "priority_rule", "role", "pack_id", "split", "part", "row_in_part", "doc_id"]
 
 
@@ -369,4 +370,133 @@ def test_the_shards_config_is_checked_before_anything_runs(tmp_path, shard_confi
     with pytest.raises(rp.Stop, match=message):
         rp.run(shard_config)
     assert not (tmp_path / "runs").exists()
+
+
+# --- stages run from settings files: default folders in the run folder, generated configs, --plan -----------------------
+@pytest.fixture
+def staged(tmp_path, tsai_outputs, monkeypatch):
+    """A run config whose clean, overlap and dedup stages run the stand-in fake_stage.py from settings files, in a made-up
+    repository (rp.REPO), with every folder left to the default. Returns (config path, repo)."""
+    repo = tmp_path / "repo"
+    (repo / "out").mkdir(parents=True)
+    monkeypatch.setattr(rp, "REPO", repo)
+    for k in ("FAKE_F2_ERROR", "FAKE_F2_BAD_SHA", "FAKE_F2_CRASH"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("FAKE_F2_DROP", "g0,h1")
+
+    def settings(name, fixture, **extra):
+        p = tmp_path / f"{name}_settings.json"
+        p.write_text(json.dumps({"fixture": str(fixture), **extra}), encoding="utf-8")
+        return str(p)
+
+    cfg = {"run_id": "test-run", "out": str(repo / "out" / "runs"), "stages": {
+        "clean": {"mode": "run", "script": str(FAKE_STAGE), "settings": settings("clean", tsai_outputs["cleaned"]), "input": "raw/sample"},
+        "overlap": {"mode": "run", "script": str(FAKE_STAGE), "settings": settings("overlap", tsai_outputs["overlap"], k=5, floor=0.5, inputs="x", out="y")},
+        "dedup": {"mode": "run", "script": str(FAKE_STAGE), "settings": settings("dedup", tsai_outputs["dedup"], cross_pack=True, results="x", inputs="x", out="y")},
+        "f2": {"script": str(FAKE_F2)}}}
+    path = tmp_path / "run_config.json"
+    path.write_text(json.dumps(cfg), encoding="utf-8")
+    return path, repo
+
+
+def edit_stage(path, stage, **changes):
+    cfg = json.loads(path.read_text(encoding="utf-8"))
+    cfg["stages"][stage].update(changes)
+    path.write_text(json.dumps(cfg), encoding="utf-8")
+
+
+def test_stages_run_from_settings_into_the_run_folder(tmp_path, staged):
+    path, repo = staged
+    m = rp.run(path)
+    run = repo / "out" / "runs" / "test-run"
+    recs = {s["stage"]: s for s in m["stages"]}
+    assert m["totals"] == {"cleaned": 13, "removed_by_dedup": 2, "dropped_by_f2": 2, "final": 9} and all(c["ok"] for c in m["checks"])
+    assert [recs[s]["output"] for s in ("clean", "overlap", "dedup")] == [f"out/runs/test-run/{s}" for s in ("clean", "overlap", "dedup")]
+    assert (run / "clean" / "train").is_dir() and (run / "overlap" / "overlap_summary.json").is_file() and (run / "dedup" / "remove_list.csv").is_file()
+    # clean takes flags; its command carries the folder and the raw sample, and there is no generated config
+    assert recs["clean"]["command"][-4:] == ["--out", str(run / "clean"), "--input-root", "raw/sample"] and recs["clean"]["config"] is None
+    # overlap and dedup get the settings with the path keys filled in, repo-relative; every other setting is kept
+    ov = json.loads((run / "cfg" / "overlap.json").read_text(encoding="utf-8"))
+    dd = json.loads((run / "cfg" / "dedup.json").read_text(encoding="utf-8"))
+    assert (ov["inputs"], ov["out"], ov["k"], ov["floor"]) == ("out/runs/test-run/clean", "out/runs/test-run/overlap", 5, 0.5)
+    assert (dd["results"], dd["inputs"], dd["out"], dd["cross_pack"]) == ("out/runs/test-run/overlap", "out/runs/test-run/clean", "out/runs/test-run/dedup", True)
+    for stage in ("overlap", "dedup"):
+        assert recs[stage]["config"] == f"cfg/{stage}.json" and recs[stage]["config_sha256"] == sha(run / "cfg" / f"{stage}.json")
+    assert recs["overlap"]["settings_sha256"] == sha(json.loads(path.read_text(encoding="utf-8"))["stages"]["overlap"]["settings"])
+    assert json.loads((run / "logs" / "clean.log").read_text(encoding="utf-8").splitlines()[-1])["input_root"] == "raw/sample"
+    assert json.loads((run / "logs" / "dedup.log").read_text(encoding="utf-8").splitlines()[-1])["keys"]["results"] == "out/runs/test-run/overlap"
+
+
+def test_a_settings_pin_that_does_not_match_stops_before_anything_runs(staged):
+    path, repo = staged
+    edit_stage(path, "overlap", settings_sha256="0" * 64)
+    with pytest.raises(rp.Stop, match="overlap: .*pins"):
+        rp.run(path)
+    assert not (repo / "out" / "runs").exists()
+
+
+def test_a_run_stage_needs_settings_or_a_command(staged):
+    path, _ = staged
+    cfg = json.loads(path.read_text(encoding="utf-8"))
+    del cfg["stages"]["dedup"]["settings"]
+    path.write_text(json.dumps(cfg), encoding="utf-8")
+    with pytest.raises(rp.Stop, match="dedup: .*settings .* is missing"):
+        rp.run(path)
+
+
+def test_a_command_must_say_where_it_writes_and_an_adopted_stage_needs_its_folder(staged):
+    path, _ = staged
+    edit_stage(path, "overlap", command=[str(FAKE_STAGE)])
+    with pytest.raises(rp.Stop, match="overlap.output is missing: with a command, say where it writes"):
+        rp.run(path)
+    edit_stage(path, "overlap", mode="adopt")
+    with pytest.raises(rp.Stop, match="overlap.output is missing \\(an adopted stage needs"):
+        rp.run(path)
+
+
+def test_an_output_may_not_take_a_folder_name_of_the_run_or_overlap_another_stage(staged):
+    path, repo = staged
+    run = repo / "out" / "runs" / "test-run"
+    edit_stage(path, "overlap", output=str(run / "final"))
+    with pytest.raises(rp.Stop, match="folder of the run itself"):
+        rp.run(path)
+    edit_stage(path, "overlap", output=str(run / "clean" / "inner"))
+    with pytest.raises(rp.Stop, match="stages.clean.output and stages.overlap.output overlap"):
+        rp.run(path)
+
+
+def test_a_settings_stage_cannot_write_outside_out(staged, tmp_path):
+    path, repo = staged
+    edit_stage(path, "overlap", output=str(tmp_path / "elsewhere"))
+    with pytest.raises(rp.Stop, match="named subfolder"):
+        rp.run(path)
+
+
+def test_the_plan_shows_every_folder_and_command_and_runs_nothing(staged, capsys, monkeypatch):
+    path, repo = staged
+    text = rp.plan(path)
+    for line in ("run folder: out/runs/test-run", "01 clean", "02 overlap", "03 dedup", "04 apply", "05 f2", "06 survivor_loss",
+                 "inputs = out/runs/test-run/clean, out = out/runs/test-run/overlap", "generated config out/runs/test-run/cfg/overlap.json",
+                 "--input-root raw/sample", "settings "):
+        assert line in text
+    assert "shards" not in text.split("\n", 1)[1] and "07 shards" not in text
+    assert not (repo / "out" / "runs").exists()  # nothing written, not even cfg/
+    assert "05 f2" not in rp.plan(path, to="apply")
+    monkeypatch.setattr(sys, "argv", ["run_pipeline.py", "--config", str(path), "--plan"])
+    rp.main()
+    assert "01 clean" in capsys.readouterr().out and not (repo / "out" / "runs").exists()
+
+
+def test_the_plan_of_an_adopted_run_says_adopt(config):
+    text = rp.plan(config)
+    assert sum(" adopt  " in line for line in text.splitlines()) == 3 and "$ python" not in text
+
+
+def test_the_plan_checks_the_config_like_a_run(staged):
+    path, _ = staged
+    edit_stage(path, "dedup", settings_sha256="0" * 64)
+    with pytest.raises(rp.Stop, match="pins"):
+        rp.plan(path)
+    with pytest.raises(rp.Stop, match="unknown stage"):
+        rp.Run(path).plan("nope")
 

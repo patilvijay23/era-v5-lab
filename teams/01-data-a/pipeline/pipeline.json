@@ -1,19 +1,15 @@
 {
-  "_comment": "Example config for run_pipeline.py on tokenizer sample v0. Paths are relative to the repository root. clean, overlap and dedup are TSAI jobs: 'adopt' points at the folders TSAI returned. Switch a stage to 'run' with a 'command' to run it here instead.",
+  "_comment": "Example config for run_pipeline.py on tokenizer sample v0. Paths are relative to the repository root. clean, overlap and dedup are TSAI jobs: 'adopt' points at the folders TSAI returned. To run a stage here instead, use its '_run_example': a settings file (settings only, no paths) and, for clean, the raw sample; the runner works out the folders (inside the run folder) and hands each script its paths. 'python run_pipeline.py --config <this file> --plan' prints every folder and command without running anything.",
   "run_id": "sample-v0",
   "out": "out/pipeline",
   "stages": {
     "clean": {
       "mode": "adopt",
-      "output": "out/tokenizer_sample_v0_clean",
+      "output": "out/tokenizer_sample_v0_clean_pr244_2026-11-12",
       "_run_example": {
         "mode": "run",
-        "command": [
-          "teams/01-data-a/spec_v1/run_tokenizer_sample.py",
-          "--config",
-          "teams/01-data-a/jobs/2026-11-02-tokenizer-sample-v0-clean/tokenizer_sample_v0_clean.json"
-        ],
-        "output": "out/tokenizer_sample_v0_clean"
+        "settings": "teams/01-data-a/jobs/2026-11-12-pr244-rerun/tokenizer_sample_v0_clean.json",
+        "input": "inputs/tokenizer_sample_v0"
       }
     },
     "overlap": {
@@ -21,12 +17,7 @@
       "output": "out/overlap",
       "_run_example": {
         "mode": "run",
-        "command": [
-          "teams/01-data-a/dedup/overlap.py",
-          "--config",
-          "teams/01-data-a/dedup/overlap.json"
-        ],
-        "output": "out/overlap"
+        "settings": "teams/01-data-a/dedup/overlap.json"
       }
     },
     "dedup": {
@@ -34,12 +25,7 @@
       "output": "out/dedup",
       "_run_example": {
         "mode": "run",
-        "command": [
-          "teams/01-data-a/dedup/dedup.py",
-          "--config",
-          "teams/01-data-a/dedup/dedup.json"
-        ],
-        "output": "out/dedup"
+        "settings": "teams/01-data-a/dedup/dedup.json"
       }
     },
     "f2": {
@@ -50,6 +36,13 @@
     "apply": {
       "link": true,
       "_link": "hard-link untouched parts instead of copying them (same file system)"
+    },
+    "_shards_example": {
+      "tokenizer": "<C3 tokenizer.json>",
+      "packs": [
+        "code-go"
+      ],
+      "_note": "rename to 'shards' to add the shard stage after survivor loss; 'packs' limits it to packs with a lane in shards/pack_table.json"
     }
   }
 }

@@ -122,7 +122,9 @@ def read_manifest(manifest):
 
 
 def stage_output(m, stage, repo):
-    out = Path(m["config"]["stages"][stage]["output"])
+    """The stage's output folder: as its manifest record shows it (the config may leave it to the default)."""
+    rec = next((s for s in m.get("stages", []) if s.get("stage") == stage), {})
+    out = Path(rec.get("output") or m["config"]["stages"][stage]["output"])
     return out if out.is_absolute() else Path(repo) / out
 
 
