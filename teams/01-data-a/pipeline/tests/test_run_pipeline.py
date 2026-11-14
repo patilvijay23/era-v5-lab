@@ -118,6 +118,13 @@ def test_full_chain(tmp_path, config):
     assert m["totals"] == {"cleaned": 13, "removed_by_dedup": 2, "dropped_by_f2": 2, "final": 9}
     assert c["ledger"] == {"rows": 13, "rows_cleaned": 13, "kept": 9, "dropped_by_clean": 0, "removed_by_dedup": 2,
                            "dropped_by_f2": 2, "f2_error": 0}
+    assert m["by_pack"] == {
+        "code-go": {"train": {"cleaned": 8, "removed_by_dedup": 1, "dropped_by_f2": 1, "final": 6},
+                    "heldout": {"cleaned": 2, "removed_by_dedup": 0, "dropped_by_f2": 1, "final": 1}},
+        "en-dclm": {"train": {"cleaned": 3, "removed_by_dedup": 1, "dropped_by_f2": 0, "final": 2}}}
+    assert {"ledger per pack = apply per pack", "every per-pack row adds up",
+            "per-pack table adds up to the stages' counts"} <= {ch["check"] for ch in m["checks"]}
+    assert rp.pack_table({}) == "" and rp.pack_table({"p": {}}) == ""
     assert sorted(p.relative_to(run / "ledger").as_posix() for p in (run / "ledger").rglob("*.parquet")) == [
         "heldout/code-go.parquet", "train/code-go.parquet", "train/en-dclm.parquet"]
     names = {ch["check"] for ch in m["checks"]}
@@ -297,6 +304,10 @@ def test_cli(tmp_path, config):
                        capture_output=True, text=True, env=env)
     assert p.returncode == 0, p.stderr
     assert json.loads(p.stdout.strip().splitlines()[-1])["final"] == 9
+    table = p.stderr.strip().splitlines()[-5:]
+    assert table[0].split() == ["pack", "split", "cleaned", "-dedup", "-f2", "final"]
+    assert table[-1].split() == ["total", "13", "2", "2", "9"]
+    assert table[1].split() == ["code-go", "train", "8", "1", "1", "6"]
 
 
 # --- the shard stage (stand-in run_shards.py; the real one is tested in shards/tests) -----------------------------------
@@ -683,6 +694,29 @@ def test_ledger_mode_b_adds_the_cleaners_drops(tmp_path, config, cleaned):
                            "final": 9}
     rec = next(s for s in m["stages"] if s["stage"] == "ledger")
     assert rec["clean_mode"] == "B" and rec["counts"]["clean_fix_by_text"] == 0
+    assert m["by_pack"]["en-dclm"]["train"] == {"raw": 4, "dropped_by_clean": 1, "cleaned": 3, "removed_by_dedup": 1,
+                                                "dropped_by_f2": 0, "final": 2}
+
+
+def test_ledger_mode_b_with_a_pack_the_cleaner_emptied(tmp_path, config, cleaned):
+    """A raw pack whose every document the cleaner dropped: in the ledger with 0 cleaned rows, absent from apply."""
+    import pyarrow as pa
+    raw = tmp_path / "raw"
+    for f in cleaned.rglob("*.parquet"):
+        dst = raw / f.relative_to(cleaned)
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        t = pq.read_table(f)
+        if f.relative_to(cleaned).as_posix() == "train/en-dclm/part-00000.parquet":
+            ghost = dict(t.slice(0, 1).to_pylist()[0], doc_id="ghost-1", pack_id="ghost-pack")
+            t = pa.concat_tables([t, pa.Table.from_pylist([ghost], schema=t.schema)])
+        pq.write_table(t, dst)
+    cfg = json.loads(config.read_text(encoding="utf-8"))
+    cfg["stages"]["ledger"] = {"raw": str(raw)}
+    config.write_text(json.dumps(cfg), encoding="utf-8")
+    m = rp.run(config)
+    assert m["by_pack"]["ghost-pack"] == {"train": {"raw": 1, "dropped_by_clean": 1, "cleaned": 0, "removed_by_dedup": 0,
+                                                    "dropped_by_f2": 0, "final": 0}}
+    assert m["totals"]["dropped_by_clean"] == 1 and all(ch["ok"] for ch in m["checks"])
 
 
 def pa_concat(t, rows):
@@ -704,3 +738,24 @@ def test_from_ledger_reuses_earlier_stages(config):
     again = rp.run(config, start="ledger")
     assert again["totals"] == first["totals"]
     assert [s["digest"] for s in again["stages"]] == [s["digest"] for s in first["stages"]]
+
+
+def test_ledger_disagreeing_with_apply_per_pack_stops(config, monkeypatch):
+    import ledger
+    real = ledger.build
+
+    def shifted(*a, **kw):
+        s = real(*a, **kw)
+        bp = s["by_pack"]
+        bp["code-go"]["train"]["removed_by_dedup"] += 1
+        bp["en-dclm"]["train"]["removed_by_dedup"] -= 1  # same totals, wrong packs
+        return s
+    monkeypatch.setattr(ledger, "build", shifted)
+    with pytest.raises(rp.Stop, match="ledger per pack = apply per pack.*code-go/train"):
+        rp.run(config)
+
+
+def test_from_ledger_keeps_the_per_pack_table(config):
+    first = rp.run(config)
+    assert rp.run(config, start="ledger")["by_pack"] == first["by_pack"]
+    assert rp.run(config, to="f2").get("by_pack") is None

@@ -68,7 +68,8 @@ CHECKS (any failure stops the run; exit code 1)
             one fingerprint set; kept + dropped + errors = rows; no errors; no stale Parquet under final/<split>
   survivor  groups = the groups in dedup_groups.csv
   ledger    its cleaned rows = the cleaned rows; removed_by_dedup = apply's removed; dropped_by_f2, f2_error and kept =
-            F2's; one fingerprint set, F2's (ledger.py also checks every final part holds the ledger's kept docs in order)
+            F2's; one fingerprint set, F2's (ledger.py also checks every final part holds the ledger's kept docs in order);
+            per pack and split, its cleaned rows and removed_by_dedup = apply_dedup_summary.json's by_pack
   from      every earlier stage's output still has the digest the manifest recorded for it
 
 MANIFEST
@@ -76,7 +77,8 @@ MANIFEST
 <out>/<run_id>/pipeline_manifest.json: the git commit, Python and pyarrow versions; per stage its mode, command, the script's
 sha256, its output folder's digest and file count, its counts, its checks and its seconds; all checks; totals (raw and dropped
 by clean when the ledger ran in mode B, cleaned, removed by dedup, dropped by F2, final, and shards_written when the shard
-stage ran). A digest is the sha256 over the sorted relative path and sha256 of every file in the folder;
+stage ran), and by_pack: the same chain for every pack and split, from the ledger. At the end of a run the per-pack
+table is also printed to stderr. A digest is the sha256 over the sorted relative path and sha256 of every file in the folder;
 JSON summaries are hashed without the fields that change between identical runs (timings, absolute paths, skip flags), so two
 runs on the same inputs give the same digests. IDs, counts and hashes only.
 """
@@ -550,9 +552,30 @@ class Run:
         self.check("ledger kept = F2's kept", t["kept"] == c["f2"]["kept"], f"ledger {t['kept']}, F2 {c['f2']['kept']}")
         self.check("ledger used F2's fingerprint set", s["inputs"]["set_sha256"] == self.done["f2"]["set_sha256"],
                    f"{str(s['inputs']['set_sha256'])[:12]}… vs {str(self.done['f2']['set_sha256'])[:12]}…")
+        by_pack = {pack: {split: pack_chain(c_, s["clean_mode"]) for split, c_ in splits.items()}
+                   for pack, splits in s["by_pack"].items()}
+        applied = load_json(self.output("apply") / "apply_dedup_summary.json").get("by_pack", {})
+        mine = {(pk, sp): (r["cleaned"], r["removed_by_dedup"]) for pk, sps in by_pack.items() for sp, r in sps.items()}
+        theirs = {(pk, sp): (r["rows"], r["removed"]) for pk, sps in applied.items() for sp, r in sps.items()}
+        # a pack/split the cleaner emptied (mode B) is in the ledger with 0 rows and absent from apply: both mean (0, 0)
+        diff = sorted(k for k in set(mine) | set(theirs) if mine.get(k, (0, 0)) != theirs.get(k, (0, 0)))
+        self.check("ledger per pack = apply per pack", not diff,
+                   f"{len(diff)} pack/split(s) differ in cleaned rows or removed, e.g. "
+                   f"{diff[0][0] + '/' + diff[0][1] + ': ledger ' + str(mine.get(diff[0])) + ', apply ' + str(theirs.get(diff[0])) if diff else ''}")
+        bad = sorted(f"{pk}/{sp}" for pk, sps in s["by_pack"].items() for sp, r in sps.items()
+                     if r["rows_cleaned"] - r["removed_by_dedup"] - r["dropped_by_f2"] - r["f2_error"] != r["kept"]
+                     or r["rows"] - r["dropped_by_clean"] != r["rows_cleaned"])
+        self.check("every per-pack row adds up", not bad,
+                   f"{len(bad)} pack/split(s) where raw - clean != cleaned or cleaned - dedup - f2 - errors != final, "
+                   f"e.g. {bad[0] if bad else ''}")
+        sums = {k: sum(r[k] for sps in by_pack.values() for r in sps.values())
+                for k in ("cleaned", "removed_by_dedup", "dropped_by_f2", "final")}
+        stage = {"cleaned": c["clean"]["rows"], "removed_by_dedup": c["apply"]["removed"],
+                 "dropped_by_f2": c["f2"]["dropped_by_f2"], "final": c["f2"]["kept"]}
+        self.check("per-pack table adds up to the stages' counts", sums == stage, f"table {sums}, stages {stage}")
         return {"mode": "run", "command": ["teams/01-data-a/pipeline/ledger.py"], "code_sha256": s["code_sha256"],
                 "output": "ledger", "clean_mode": s["clean_mode"],
-                "counts": {k: v for k, v in t.items() if v is not None}}
+                "counts": {k: v for k, v in t.items() if v is not None}, "by_pack": by_pack}
 
     def stage_shards(self):
         """The cleaning_pipeline.json of the run, then run_shards.py on final/. The manifest on disk (written after the earlier
@@ -620,7 +643,11 @@ class Run:
             self.write()
             print(f"{stage}: {json.dumps({k: v for k, v in self.done[stage]['counts'].items() if k != 'by_part'})}",
                   file=sys.stderr, flush=True)
-        return self.write()
+        m = self.write()
+        table = pack_table(m.get("by_pack") or {})
+        if table:
+            print(table, file=sys.stderr, flush=True)
+        return m
 
     def write(self):
         c = {s: self.done[s]["counts"] for s in self.done}
@@ -637,15 +664,47 @@ class Run:
         if "ledger" in c and self.done["ledger"].get("clean_mode") == "B":
             totals = {"raw": c["ledger"]["rows"], "dropped_by_clean": c["ledger"]["dropped_by_clean"], **totals}
         stages = [self.done[s] for s in STAGES if s in self.done]
+        by_pack = self.done.get("ledger", {}).get("by_pack")
         manifest = {"tool": "run_pipeline.py", "run_id": self.cfg["run_id"], "config": self.cfg,
                     "code_sha256": sha256(Path(__file__)), "git_commit": git_commit(),
                     "python": platform.python_version(), "pyarrow": pyarrow_version(), "stages": stages,
                     "checks": [dict(ch, stage=s["stage"]) for s in stages for ch in s.get("checks", [])], "totals": totals}
+        if by_pack:
+            manifest["by_pack"] = by_pack
         self.dir.mkdir(parents=True, exist_ok=True)
         tmp = self.manifest_path.with_name(self.manifest_path.name + ".tmp")
         tmp.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8", newline="\n")
         tmp.replace(self.manifest_path)
         return manifest
+
+
+def pack_chain(c, clean_mode):
+    """One pack and split of the ledger summary as the manifest's chain: (raw, dropped_by_clean,) cleaned, removed by
+    dedup, dropped by F2, final. F2 errors have no column: the runner stops when F2 reports any ("F2 reported no errors"),
+    so a finished run has none; stage_ledger's "every per-pack row adds up" check still counts them."""
+    chain = {"raw": c["rows"], "dropped_by_clean": c["dropped_by_clean"]} if clean_mode == "B" else {}
+    chain.update(cleaned=c["rows_cleaned"], removed_by_dedup=c["removed_by_dedup"], dropped_by_f2=c["dropped_by_f2"],
+                 final=c["kept"])
+    return chain
+
+
+def pack_table(by_pack):
+    """The per-pack chain as a plain-text table, with a total row ("" when there is nothing to show)."""
+    first = next((r for sps in by_pack.values() for r in sps.values()), None)
+    if first is None:
+        return ""
+    cols = list(first)
+    head = {"raw": "raw", "dropped_by_clean": "-clean", "cleaned": "cleaned", "removed_by_dedup": "-dedup",
+            "dropped_by_f2": "-f2", "final": "final"}
+    rows = [(pack, split, [r[c] for c in cols]) for pack in sorted(by_pack)
+            for split, r in sorted(by_pack[pack].items(), key=lambda kv: SPLITS.index(kv[0]) if kv[0] in SPLITS else 9)]
+    rows.append(("total", "", [sum(r[2][i] for r in rows) for i in range(len(cols))]))
+    w = max(len("pack"), *(len(r[0]) for r in rows))
+    nums = [max(len(head[c]), *(len(f"{r[2][i]:,}") for r in rows)) for i, c in enumerate(cols)]
+    line = lambda a, b, vals: f"{a:<{w}}  {b:<7}  " + "  ".join(f"{v:>{n}}" for v, n in zip(vals, nums))
+    out = [line("pack", "split", [head[c] for c in cols])]
+    out += [line(a, b, [f"{v:,}" for v in vals]) for a, b, vals in rows]
+    return "\n".join(out)
 
 
 def git_commit():
