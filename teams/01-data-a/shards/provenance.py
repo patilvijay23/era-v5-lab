@@ -30,6 +30,12 @@ Returns a dict of IDs, counts and hashes (never text):
   f2          {set_sha256, run_f2_py_sha256, dropped: [{doc_id, items, offset}]}   items are benchmark item IDs
   counts      {cleaned, removed_by_dedup, dropped_by_f2, final}
   pipeline    {manifest_sha256, run_id, git_commit}
+  record      {clean_py_sha256, f2_set_sha256, dedup: {remove_list_sha256, remove_list_rows}}   = processing_record()
+
+processing_record(manifest) is what <run>/cleaning_pipeline.json says: the processing behind every shard of the run (no
+link to the manifest, which is rewritten after every stage). run_pipeline.py's shard stage writes that file with
+write_record(manifest) (or: provenance.py --manifest <m> --write-record); shard_writer.py finds it next to the manifest,
+checks it against processing_record() and copies it into the shard folder.
 """
 import sys
 sys.dont_write_bytecode = True
@@ -100,8 +106,8 @@ def csv_rows(path, split, part):
         return [r for r in csv.DictReader(f) if r["split"] == split and r["part"].replace("\\", "/") == part]
 
 
-def load(input_part, manifest, repo=REPO):
-    input_part, manifest, repo = Path(input_part), Path(manifest), Path(repo)
+def read_manifest(manifest):
+    """(the manifest, {stage: its record}); Stop when it is not run_pipeline.py's, lacks a stage the shard needs, or holds a failed check."""
     m = read_json(manifest, "the pipeline manifest")
     if m.get("tool") != "run_pipeline.py":
         raise Stop(f"{manifest} is not a run_pipeline.py manifest")
@@ -112,14 +118,59 @@ def load(input_part, manifest, repo=REPO):
     failed = [c for c in m.get("checks", []) if not c.get("ok")]
     if failed:
         raise Stop(f"{manifest} holds a failed check: {failed[0].get('stage')}: {failed[0].get('check')}")
+    return m, stages
+
+
+def stage_output(m, stage, repo):
+    out = Path(m["config"]["stages"][stage]["output"])
+    return out if out.is_absolute() else Path(repo) / out
+
+
+def processing_record(manifest, repo=REPO):
+    """What the run's processing was, for cleaning_pipeline.json: {clean_py_sha256, f2_set_sha256, dedup: {remove_list_sha256,
+    remove_list_rows}}. Read from the manifest, the clean job's job_summary.json, apply's summary and remove_list.csv as it is now."""
+    manifest = Path(manifest)
+    m, stages = read_manifest(manifest)
+    run = manifest.resolve().parent
+    job_path = stage_output(m, "clean", repo) / "job_summary.json"
+    if not job_path.is_file():
+        raise Stop(f"{job_path.parent} has no job_summary.json: the clean job's summary records the clean.py sha256 and the raw parts")
+    clean_sha = read_json(job_path, "the clean job's summary").get("clean_sha256")
+    if not clean_sha:
+        raise Stop(f"{job_path}: no clean_sha256")
+    f2_set = stages["f2"].get("set_sha256")
+    if not f2_set:
+        raise Stop(f"{manifest}: the f2 stage records no set_sha256")
+    summary = read_json(run / "deduped" / "apply_dedup_summary.json", "apply's summary")
+    remove_list = stage_output(m, "dedup", repo) / "remove_list.csv"
+    if not remove_list.is_file():
+        raise Stop(f"{remove_list.parent} has no remove_list.csv")
+    rl_sha = sha256(remove_list)
+    if rl_sha != summary.get("remove_list", {}).get("sha256"):
+        raise Stop(f"{remove_list} changed after apply used it (sha256 {rl_sha[:12]}…, apply recorded "
+                   f"{str(summary.get('remove_list', {}).get('sha256'))[:12]}…)")
+    return {"clean_py_sha256": clean_sha, "f2_set_sha256": f2_set,
+            "dedup": {"remove_list_sha256": rl_sha, "remove_list_rows": summary["remove_list"]["rows"]}}
+
+
+def write_record(manifest, repo=REPO):
+    """Write <run>/cleaning_pipeline.json (next to the manifest) from processing_record. Returns (path, record)."""
+    record = processing_record(manifest, repo)
+    path = Path(manifest).resolve().parent / "cleaning_pipeline.json"
+    path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8", newline="\n")
+    return path, record
+
+
+def load(input_part, manifest, repo=REPO):
+    input_part, manifest, repo = Path(input_part), Path(manifest), Path(repo)
+    m, stages = read_manifest(manifest)
     run = manifest.resolve().parent
     split, pack_id, part = where_in_run(input_part, run)
     if not input_part.is_file():
         raise Stop(f"--input {input_part} is not a file")
 
     def out_of(stage):
-        out = Path(m["config"]["stages"][stage]["output"])
-        return out if out.is_absolute() else repo / out
+        return stage_output(m, stage, repo)
 
     # the final part and its F2 report
     packs, rows = pack_ids_and_rows(input_part)
@@ -199,15 +250,23 @@ def load(input_part, manifest, repo=REPO):
         "counts": {"cleaned": entry["rows"], "removed_by_dedup": entry["removed"],
                    "dropped_by_f2": f2["dropped_by_f2"], "final": rows},
         "pipeline": {"manifest_sha256": sha256(manifest), "run_id": m.get("run_id"), "git_commit": m.get("git_commit")},
+        "record": processing_record(manifest, repo),
     }
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--input", type=Path, required=True, help="a part F2 wrote: <run>/final/<split>/<pack>/<part>.parquet")
+    ap.add_argument("--input", type=Path, help="a part F2 wrote: <run>/final/<split>/<pack>/<part>.parquet")
     ap.add_argument("--manifest", type=Path, required=True, help="the run's pipeline_manifest.json")
+    ap.add_argument("--write-record", action="store_true", help="write <run>/cleaning_pipeline.json instead of checking a part")
     args = ap.parse_args()
+    if not args.write_record and not args.input:
+        ap.error("--input is required unless --write-record is given")
     try:
+        if args.write_record:
+            path, record = write_record(args.manifest)
+            print(f"wrote {path}\n{json.dumps(record, indent=2)}")
+            return
         info = load(args.input, args.manifest)
     except Stop as e:
         sys.exit(f"provenance: {e}")

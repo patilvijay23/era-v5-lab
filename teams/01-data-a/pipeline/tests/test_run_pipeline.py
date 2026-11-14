@@ -19,6 +19,7 @@ from conftest import HEADER, PARTS, PIPELINE
 import run_pipeline as rp
 
 FAKE_F2 = Path(__file__).resolve().parent / "fake_run_f2.py"
+FAKE_SHARDS = Path(__file__).resolve().parent / "fake_run_shards.py"
 GROUP_HEADER = ["group_id", "group_size", "priority_rule", "role", "pack_id", "split", "part", "row_in_part", "doc_id"]
 
 
@@ -95,7 +96,7 @@ def final_ids(run):
 def test_full_chain(tmp_path, config):
     m = rp.run(config)
     run = tmp_path / "runs" / "test-run"
-    assert [s["stage"] for s in m["stages"]] == list(rp.STAGES)
+    assert [s["stage"] for s in m["stages"]] == [s for s in rp.STAGES if s not in rp.OPTIONAL]
     c = {s["stage"]: s["counts"] for s in m["stages"]}
     assert c["clean"]["rows"] == 13 and c["overlap"]["documents_all"] == 13 and c["dedup"]["remove_list_rows"] == 2
     assert (c["apply"]["rows"], c["apply"]["removed"], c["apply"]["kept"]) == (13, 2, 11)
@@ -121,7 +122,7 @@ def test_digests_repeat_across_identical_runs(tmp_path, config, tsai_outputs):
 def test_from_keeps_earlier_checks(config):
     full = len(rp.run(config, to="apply")["checks"])
     m = rp.run(config, start="f2")
-    assert [s["stage"] for s in m["stages"]] == list(rp.STAGES) and m["totals"]["final"] == 9
+    assert [s["stage"] for s in m["stages"]] == [s for s in rp.STAGES if s not in rp.OPTIONAL] and m["totals"]["final"] == 9
     assert len(m["checks"]) > full and {ch["stage"] for ch in m["checks"]} >= {"overlap", "dedup", "apply", "f2"}
 
 
@@ -279,3 +280,91 @@ def test_cli(tmp_path, config):
                        capture_output=True, text=True, env=env)
     assert p.returncode == 0, p.stderr
     assert json.loads(p.stdout.strip().splitlines()[-1])["final"] == 9
+
+
+# --- the shard stage (stand-in run_shards.py; the real one is tested in shards/tests) -----------------------------------
+@pytest.fixture
+def shard_config(tmp_path, tsai_outputs, config, monkeypatch):
+    """A config with stages.shards, and the clean job's job_summary.json the shard stage needs. Returns the config path."""
+    for k in ("FAKE_SHARDS_FAIL", "FAKE_SHARDS_NONE", "FAKE_SHARDS_BAD_RUN"):
+        monkeypatch.delenv(k, raising=False)
+    (tsai_outputs["cleaned"] / "job_summary.json").write_text(json.dumps({"clean_sha256": "c" * 64, "parts": []}), encoding="utf-8")
+    tokenizer = tmp_path / "tokenizer.json"
+    tokenizer.write_text("{}", encoding="utf-8")
+    return write_config(tmp_path / "pipeline.json", tsai_outputs,
+                        shards={"script": str(FAKE_SHARDS), "tokenizer": str(tokenizer), "packs": ["code-go"], "tokens": 100})
+
+
+def test_shards_run_after_f2_and_are_recorded(tmp_path, shard_config):
+    m = rp.run(shard_config)
+    run = tmp_path / "runs" / "test-run"
+    assert [s["stage"] for s in m["stages"]] == list(rp.STAGES)
+    s = m["stages"][-1]
+    assert s["counts"] == {"written": 2, "failed": 0, "skipped": 0, "not_sharded": 1, "truncated": 0, "parts": 3}
+    assert m["totals"]["shards_written"] == 2 and all(ch["ok"] for ch in m["checks"])
+    record = json.loads((run / "cleaning_pipeline.json").read_text(encoding="utf-8"))
+    assert sorted(record) == ["clean_py_sha256", "dedup", "f2_set_sha256"] and record["clean_py_sha256"] == "c" * 64
+    assert s["cleaning_pipeline_sha256"] == rp.sha256(run / "cleaning_pipeline.json")
+    assert json.loads((run / "pipeline_manifest.json").read_text(encoding="utf-8"))["stages"][-1]["stage"] == "shards"
+    assert json.loads((run / "shards" / "args.json").read_text(encoding="utf-8"))["packs"] == ["code-go"]
+    assert json.loads((run / "shards" / "args.json").read_text(encoding="utf-8"))["tokens"] == 100
+    assert (run / "logs" / "shards.log").is_file() and s["digest"] and s["code_sha256"]
+
+
+def test_without_stages_shards_the_run_stops_after_survivor_loss(tmp_path, config):
+    m = rp.run(config)
+    assert [s["stage"] for s in m["stages"]][-1] == "survivor_loss" and "shards_written" not in m["totals"]
+    assert not (tmp_path / "runs" / "test-run" / "cleaning_pipeline.json").exists()
+    with pytest.raises(rp.Stop, match="stages.shards is not configured"):
+        rp.run(config, to="shards")
+
+
+def test_from_shards_adds_the_stage_to_a_finished_run(tmp_path, shard_config):
+    rp.run(shard_config, to="survivor_loss")
+    m = rp.run(shard_config, start="shards")
+    assert [s["stage"] for s in m["stages"]] == list(rp.STAGES) and m["totals"]["final"] == 9 and m["totals"]["shards_written"] == 2
+
+
+def test_a_second_shard_run_into_the_same_out_stops(shard_config):
+    rp.run(shard_config)
+    with pytest.raises(rp.Stop, match="run_shards.py exited 0"):  # the stand-in refuses, as the real one does
+        rp.run(shard_config, start="shards")
+
+
+def test_a_failed_part_stops_the_run_before_the_stage_is_recorded(tmp_path, shard_config, monkeypatch):
+    monkeypatch.setenv("FAKE_SHARDS_FAIL", "1")
+    with pytest.raises(rp.Stop, match="no part failed or was skipped"):
+        rp.run(shard_config)
+    stages = [s["stage"] for s in json.loads((tmp_path / "runs" / "test-run" / "pipeline_manifest.json").read_text(encoding="utf-8"))["stages"]]
+    assert stages[-1] == "survivor_loss"
+
+
+def test_a_shard_process_that_wrote_no_summary_stops_the_run(shard_config, monkeypatch):
+    monkeypatch.setenv("FAKE_SHARDS_NONE", "1")
+    with pytest.raises(rp.Stop, match="wrote no shards_summary.json"):
+        rp.run(shard_config)
+
+
+def test_a_summary_of_another_run_stops_the_run(shard_config, monkeypatch):
+    monkeypatch.setenv("FAKE_SHARDS_BAD_RUN", "1")
+    with pytest.raises(rp.Stop, match="the summary is this run's"):
+        rp.run(shard_config)
+
+
+def test_no_clean_job_summary_means_no_shard_stage(tmp_path, shard_config, tsai_outputs):
+    (tsai_outputs["cleaned"] / "job_summary.json").unlink()
+    with pytest.raises(rp.Stop, match="shards: .*no job_summary.json"):
+        rp.run(shard_config)
+
+
+@pytest.mark.parametrize("change, message", [({"tokenizer": "/no/such/tokenizer.json"}, "stages.shards.tokenizer"),
+                                             ({"tokens": 0}, "stages.shards.tokens"), ({"packs": "code-go"}, "stages.shards.packs"),
+                                             ({"script": "/no/such/run_shards.py"}, "shards script")])
+def test_the_shards_config_is_checked_before_anything_runs(tmp_path, shard_config, change, message):
+    cfg = json.loads(shard_config.read_text(encoding="utf-8"))
+    cfg["stages"]["shards"].update(change)
+    shard_config.write_text(json.dumps(cfg), encoding="utf-8")
+    with pytest.raises(rp.Stop, match=message):
+        rp.run(shard_config)
+    assert not (tmp_path / "runs").exists()
+

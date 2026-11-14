@@ -183,3 +183,41 @@ def test_a_manifest_with_a_failed_check_stops(run):
     m.write_text(json.dumps(data), encoding="utf-8")
     with pytest.raises(provenance.Stop, match="failed check"):
         load(run, "train", "code-go/part-00000.parquet")
+
+
+def f2_set(run):
+    return next(s for s in json.loads((run / "pipeline_manifest.json").read_text(encoding="utf-8"))["stages"] if s["stage"] == "f2")["set_sha256"]
+
+
+def test_the_processing_record_names_clean_f2_and_the_remove_list(run):
+    m = run / "pipeline_manifest.json"
+    record = provenance.processing_record(m)
+    assert record == {"clean_py_sha256": CLEAN_SHA, "f2_set_sha256": f2_set(run),
+                      "dedup": {"remove_list_sha256": sha(run.parent.parent / "dedup" / "remove_list.csv"), "remove_list_rows": 2}}
+    assert load(run, "train", "code-go/part-00001.parquet")["record"] == record
+
+
+def test_write_record_writes_the_file_next_to_the_manifest(run):
+    path, record = provenance.write_record(run / "pipeline_manifest.json")
+    assert path == run / "cleaning_pipeline.json" and json.loads(path.read_text(encoding="utf-8")) == record
+    assert path.read_bytes().endswith(b"}\n") and b"\r" not in path.read_bytes()
+    assert "manifest" not in path.read_text(encoding="utf-8")  # no link to the run log
+
+
+def test_the_command_line_writes_the_record(run, capsys, monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["provenance.py", "--manifest", str(run / "pipeline_manifest.json"), "--write-record"])
+    provenance.main()
+    assert (run / "cleaning_pipeline.json").is_file() and "wrote" in capsys.readouterr().out
+
+
+def test_no_record_without_the_clean_jobs_summary(run):
+    (run.parent.parent / "cleaned" / "job_summary.json").unlink()
+    with pytest.raises(provenance.Stop, match="no job_summary.json"):
+        provenance.processing_record(run / "pipeline_manifest.json")
+
+
+def test_no_record_when_the_remove_list_changed_after_apply(run):
+    with open(run.parent.parent / "dedup" / "remove_list.csv", "a", encoding="utf-8") as f:
+        f.write("code-go,train,code-go/part-00000.parquet,1,x\n")
+    with pytest.raises(provenance.Stop, match="changed after apply used it"):
+        provenance.processing_record(run / "pipeline_manifest.json")

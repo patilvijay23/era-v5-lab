@@ -14,7 +14,7 @@ import pyarrow.parquet as pq
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-from synthetic_run import make_run  # noqa: E402  (also puts shards/ and pipeline/ on the path)
+from synthetic_run import make_run, sha  # noqa: E402  (also puts shards/ and pipeline/ on the path)
 import run_shards as rs  # noqa: E402  (imports shard_writer, which puts G6's folder on the path)
 from dataio.tokenizer import BrahmicTokenizer  # noqa: E402
 
@@ -75,19 +75,44 @@ def test_a_pack_without_a_lane_or_row_is_skipped_and_the_rest_written(run, tmp_p
     assert s["parts"]["train/pk-nolane/part-00000.parquet"]["status"] == "skipped"
     assert "no lane" in s["parts"]["train/pk-nolane/part-00000.parquet"]["reason"]
     assert s["parts"]["train/pk-b/part-00000.parquet"]["status"] == "written"
-    assert s["counts"] == {"written": 1, "failed": 0, "skipped": 1, "truncated": 0}
+    assert s["counts"] == {"written": 1, "failed": 0, "skipped": 1, "not_sharded": 0, "truncated": 0}
     assert not list(out.glob("pk-nolane*"))
     table.write_text(json.dumps({"packs": {}}), encoding="utf-8")
     code, _, s = go(run, tmp_path, table, "--pack", "pk-b", out="shards2")
     assert code == 1 and "not in pack_table.json" in s["parts"]["train/pk-b/part-00000.parquet"]["reason"]
 
 
-def test_a_held_out_part_fails_in_the_writer_and_the_others_still_run(run, tmp_path, table):
+def test_a_held_out_part_is_not_sharded_and_is_not_an_error(run, tmp_path, table):
     code, out, s = go(run, tmp_path, table, "--pack", "pk-a")
-    assert code == 1
-    failed = s["parts"]["heldout/pk-a/part-00000.parquet"]
-    assert failed["status"] == "failed" and "heldout part" in failed["reason"] and "G3 and G9" in failed["reason"]
-    assert s["counts"] == {"written": 2, "failed": 1, "skipped": 0, "truncated": 0}
+    assert code == 0
+    held = s["parts"]["heldout/pk-a/part-00000.parquet"]
+    assert held["status"] == "not_sharded" and "G3 and G9" in held["reason"] and "shard_id" not in held
+    assert s["counts"] == {"written": 2, "failed": 0, "skipped": 0, "not_sharded": 1, "truncated": 0}
+    assert not list(out.glob("*heldout*"))
+
+
+def test_a_validation_folder_is_not_sharded_either(run, tmp_path, table):
+    (run / "final" / "heldout").rename(run / "final" / "validation")
+    code, out, s = go(run, tmp_path, table, "--pack", "pk-a")
+    assert code == 0 and s["parts"]["validation/pk-a/part-00000.parquet"]["status"] == "not_sharded"
+
+
+def test_a_held_out_part_of_a_pack_without_a_lane_is_not_sharded_not_skipped(run, tmp_path, table):
+    t = json.loads(table.read_text(encoding="utf-8"))
+    t["packs"]["pk-a"]["lane"] = None
+    table.write_text(json.dumps(t), encoding="utf-8")
+    code, out, s = go(run, tmp_path, table, "--pack", "pk-a")
+    assert s["parts"]["heldout/pk-a/part-00000.parquet"]["status"] == "not_sharded"
+    assert s["counts"]["skipped"] == 2 and code == 1  # the two train parts
+
+
+def test_held_out_parts_alone_are_a_clean_run_and_do_not_block_a_rerun(run, tmp_path, table):
+    (out := tmp_path / "shards").mkdir()
+    (out / "pk-a-heldout-000000.json").write_text("{}", encoding="utf-8")  # whatever is there for a held-out part is not checked
+    for part in (run / "final" / "train").rglob("*.parquet"):
+        part.unlink()
+    code, out, s = go(run, tmp_path, table, "--pack", "pk-a")
+    assert code == 0 and s["counts"]["written"] == 0 and s["counts"]["not_sharded"] == 1
 
 
 def test_a_part_whose_file_changed_after_f2_fails_alone(run, tmp_path, table):
@@ -113,17 +138,32 @@ def test_a_second_run_for_other_packs_adds_to_the_summary(run, tmp_path, table):
     code, out, s = go(run, tmp_path, table, "--pack", "pk-a")
     assert sorted(v["shard_id"] for v in s["parts"].values() if v["status"] == "written") == \
         ["pk-a-train-000000", "pk-a-train-000001", "pk-b-train-000000"]
-    assert code == 1  # this run's held-out pk-a part failed
+    assert code == 0 and s["counts"]["not_sharded"] == 1
 
 
 def test_a_summary_from_another_run_is_refused(run, tmp_path, table):
     go(run, tmp_path, table, "--pack", "pk-b")
     summary = tmp_path / "shards" / "shards_summary.json"
     s = json.loads(summary.read_text(encoding="utf-8"))
-    s["manifest_sha256"] = "0" * 64
+    s["run_id"] = "another-run"
     summary.write_text(json.dumps(s), encoding="utf-8")
     with pytest.raises(SystemExit, match="another pipeline run"):
         go(run, tmp_path, table, "--pack", "pk-a")
+
+
+def test_the_summary_names_the_run_and_the_processing(run, tmp_path, table):
+    code, out, s = go(run, tmp_path, table, "--pack", "pk-b")
+    assert s["run_id"] == "test-run" and "manifest_sha256" not in s
+    assert s["cleaning_pipeline_sha256"] == sha(out / "cleaning_pipeline.json")
+
+
+def test_other_processing_into_the_same_out_fails_part_by_part_and_keeps_the_earlier_shards(run, tmp_path, table, monkeypatch):
+    go(run, tmp_path, table, "--pack", "pk-b")
+    other = make_run(tmp_path / "other", monkeypatch, {("train", "pk-a/part-00000.parquet"): rows("pk-a", "a0_")},
+                     removed=[("train", "pk-a/part-00000.parquet", 1)])  # another remove list, same run_id
+    code, out, s = go(other, tmp_path, table, "--pack", "pk-a")
+    assert code == 1 and "other processing" in s["parts"]["train/pk-a/part-00000.parquet"]["reason"]
+    assert s["parts"]["train/pk-b/part-00000.parquet"]["status"] == "written"
 
 
 def test_a_part_that_does_not_fit_is_flagged_truncated(run, tmp_path, table):

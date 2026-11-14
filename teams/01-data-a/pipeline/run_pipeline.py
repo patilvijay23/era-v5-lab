@@ -1,4 +1,4 @@
-"""One command for Data A's pipeline: clean -> overlap -> dedup -> apply the remove list -> F2 -> survivor loss.
+"""One command for Data A's pipeline: clean -> overlap -> dedup -> apply the remove list -> F2 -> survivor loss -> shards.
 
   python -I teams/01-data-a/pipeline/run_pipeline.py --config teams/01-data-a/pipeline/pipeline.json [--from STAGE] [--to STAGE]
 
@@ -15,14 +15,22 @@ STAGES
   f2             run_f2.py on <run>/deduped/<split>                           -> <run>/final/<split>
                  (one process per split; with "workers": N, up to N processes at once, one per pack folder)
   survivor_loss  survivor_loss.py on dedup_groups.csv and F2's reports        -> <run>/report
+  shards         optional, only with stages.shards: writes <run>/cleaning_pipeline.json (clean.py sha256, F2 set, dedup remove
+                 list: the processing behind the shards), then shards/run_shards.py on <run>/final   -> <run>/shards (or "out")
+                 It runs after the manifest holds every earlier stage, which is what the shard writer reads; its own record is
+                 added to the manifest afterwards. The stage stops the run if a part failed or was skipped, if no shard was
+                 written, or if the summary is not this run's. --from shards runs only this stage, into an out folder without shards.
 
 clean, overlap and dedup take "mode": "adopt" (TSAI ran the job; "output" names the folder it returned) or "mode": "run"
 ("command": the script and its arguments, run with this Python from the repository root; "output": where that script writes).
 apply, f2 and survivor_loss always run. f2 takes "script" (default teams/01-data-a/spec_v1/run_f2.py) and "workers"
 (default 1; each run_f2.py process loads G9's full set, about 1.1 GB of memory, so N workers need about N × 1.1 GB plus the
-documents in flight). apply takes "link" (default true: untouched parts are hard-linked, not copied). Scripts run with
+documents in flight). shards takes "tokenizer" (required: G3's C3 tokenizer.json), and optionally "script" (default
+teams/01-data-a/shards/run_shards.py), "out" (default <run>/shards), "tokens", "packs" (only these packs), "pack_table" and
+"any_tokenizer" (tests only). apply takes "link" (default true: untouched parts are hard-linked, not copied). Scripts run with
 python -I, which ignores user site-packages and PYTHONPATH: install pyarrow and the rest into the environment itself.
 Each script's output streams to <run>/logs/<stage>.log (F2: logs/f2_<split>[_<pack>].log).
+Without stages.shards the run stops after survivor_loss, and --to shards is an error.
 
 CONFIG (JSON; keys starting with "_" are comments; paths relative to the repository root, or absolute)
 =====================================================================================================
@@ -44,7 +52,7 @@ MANIFEST
 ========
 <out>/<run_id>/pipeline_manifest.json: the git commit, Python and pyarrow versions; per stage its mode, command, the script's
 sha256, its output folder's digest and file count, its counts, its checks and its seconds; all checks; totals (cleaned, removed
-by dedup, dropped by F2, final). A digest is the sha256 over the sorted relative path and sha256 of every file in the folder;
+by dedup, dropped by F2, final, and shards_written when the shard stage ran). A digest is the sha256 over the sorted relative path and sha256 of every file in the folder;
 JSON summaries are hashed without the fields that change between identical runs (timings, absolute paths, skip flags), so two
 runs on the same inputs give the same digests. IDs, counts and hashes only.
 """
@@ -56,11 +64,13 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[2]
-STAGES = ("clean", "overlap", "dedup", "apply", "f2", "survivor_loss")
+STAGES = ("clean", "overlap", "dedup", "apply", "f2", "survivor_loss", "shards")
+OPTIONAL = ("shards",)  # runs only when stages.shards is configured
 EXTERNAL = ("clean", "overlap", "dedup")
 NEEDED = {"overlap": ("overlap_summary.json", "overlap_matches.csv", "overlap_docs.parquet"),
           "dedup": ("remove_list.csv", "dedup_groups.csv", "dedup_summary.json")}
 DEFAULT_F2 = "teams/01-data-a/spec_v1/run_f2.py"
+DEFAULT_SHARDS = "teams/01-data-a/shards/run_shards.py"
 SPLITS = ("train", "heldout")
 VOLATILE = {"seconds", "input", "path", "cleaned", "skipped"}  # JSON fields that differ between identical runs
 
@@ -166,6 +176,8 @@ class Run:
     def output(self, stage):
         if stage in EXTERNAL:
             return path(self.stages[stage]["output"])
+        if stage == "shards":
+            return path(self.stages["shards"]["out"]) if self.stages.get("shards", {}).get("out") else self.dir / "shards"
         return self.dir / {"apply": "deduped", "f2": "final", "survivor_loss": "report"}[stage]
 
     def validate(self, upto):
@@ -190,10 +202,32 @@ class Run:
             script = self.stages.get("f2", {}).get("script", DEFAULT_F2)
             if not path(script).is_file():
                 raise Stop(f"config: f2 script {script} not found (run_f2.py is in PR #35; set stages.f2.script)")
+        if "shards" in self.stages or upto == "shards":
+            self.validate_shards(upto)
         for stage in EXTERNAL:
             o, r = self.output(stage).resolve(), self.dir.resolve()
             if o == r or r in o.parents or o in r.parents:
                 raise Stop(f"config: stages.{stage}.output and the run folder {self.dir} overlap")
+
+    def validate_shards(self, upto):
+        spec = self.stages.get("shards")
+        if STAGES.index(upto) < STAGES.index("shards"):
+            return
+        if not isinstance(spec, dict):
+            raise Stop("config: stages.shards is not configured (it needs at least a tokenizer); the run stops after survivor_loss without it")
+        if not spec.get("tokenizer") or not path(spec["tokenizer"]).is_file():
+            raise Stop(f"config: stages.shards.tokenizer {spec.get('tokenizer')!r} is missing or not a file")
+        script = spec.get("script", DEFAULT_SHARDS)
+        if not path(script).is_file():
+            raise Stop(f"config: shards script {script} not found")
+        tokens = spec.get("tokens")
+        if tokens is not None and (not isinstance(tokens, int) or isinstance(tokens, bool) or tokens < 1):
+            raise Stop(f"config: stages.shards.tokens is {tokens!r}, expected a whole number >= 1")
+        packs = spec.get("packs", [])
+        if not isinstance(packs, list) or not all(isinstance(p, str) for p in packs):
+            raise Stop("config: stages.shards.packs must be a list of pack ids")
+        if spec.get("pack_table") and not path(spec["pack_table"]).is_file():
+            raise Stop(f"config: stages.shards.pack_table {spec['pack_table']} not found")
 
     def check(self, name, ok, detail):
         self.checks.append({"check": name, "ok": bool(ok), "detail": detail})
@@ -375,9 +409,47 @@ class Run:
         return {"mode": "run", "command": ["teams/01-data-a/pipeline/survivor_loss.py"], "code_sha256": s["code_sha256"],
                 "output": "report", "counts": {**s["groups"], "survivors_dropped_by_f2": s["survivors_dropped_by_f2"]}}
 
+    def stage_shards(self):
+        """The cleaning_pipeline.json of the run, then run_shards.py on final/. The manifest on disk (written after the earlier
+        stages) is what the shard writer reads; this stage's own record is added to the manifest afterwards."""
+        spec = self.stages["shards"]
+        script, out = spec.get("script", DEFAULT_SHARDS), self.output("shards")
+        sys.path.insert(0, str(HERE.parent / "shards"))
+        import provenance
+        try:
+            record_path, record = provenance.write_record(self.manifest_path, REPO)
+        except provenance.Stop as e:
+            raise Stop(f"shards: {e}")
+        args = ["--input", self.output("f2"), "--manifest", self.manifest_path, "--tokenizer", path(spec["tokenizer"]), "--out", out]
+        if spec.get("tokens"):
+            args += ["--tokens", spec["tokens"]]
+        for pack in spec.get("packs", []):
+            args += ["--pack", pack]
+        if spec.get("pack_table"):
+            args += ["--pack-table", path(spec["pack_table"])]
+        if spec.get("any_tokenizer"):
+            args.append("--any-tokenizer")
+        log = self.dir / "logs" / "shards.log"
+        rc = run_script(script, args, "shards", log)
+        summary_path = out / "shards_summary.json"
+        if not summary_path.is_file():
+            raise Stop(f"shards: {Path(script).name} failed with exit code {rc} and wrote no shards_summary.json: {tail(log)}")
+        s = load_json(summary_path)
+        counts, record_sha = s["counts"], sha256(record_path)
+        self.check("shards: no part failed or was skipped", counts["failed"] == 0 and counts["skipped"] == 0,
+                   f"{counts}; see logs/shards.log")
+        self.check("shards: run_shards.py exited 0", rc == 0, f"exit code {rc}; see logs/shards.log")
+        self.check("shards: at least one shard written", counts["written"] > 0, f"{counts}")
+        self.check("shards: the summary is this run's, made with this run's cleaning_pipeline.json",
+                   s.get("run_id") == self.cfg["run_id"] and s.get("cleaning_pipeline_sha256") == record_sha,
+                   f"summary run_id {s.get('run_id')}, cleaning_pipeline_sha256 {str(s.get('cleaning_pipeline_sha256'))[:12]}…")
+        return {"mode": "run", "command": [script, "--input", "<run>/final", "--manifest", "<run>/pipeline_manifest.json", "--out", "<out>"],
+                "code_sha256": sha256(path(script)), "output": spec.get("out") or "shards", "cleaning_pipeline_sha256": record_sha,
+                "counts": {**counts, "parts": len(s["parts"])}}
+
     # --- the run ----------------------------------------------------------------------------------------------------
     def execute(self, start=None, to=None):
-        start, to = start or STAGES[0], to or STAGES[-1]
+        start, to = start or STAGES[0], to or (STAGES[-1] if "shards" in self.stages else "survivor_loss")
         for s in (start, to):
             if s not in STAGES:
                 raise Stop(f"unknown stage {s!r}; stages are {', '.join(STAGES)}")
@@ -414,6 +486,8 @@ class Run:
         if "f2" in c:
             totals["dropped_by_f2"] = c["f2"]["dropped_by_f2"]
             totals["final"] = c["f2"]["kept"]
+        if "shards" in c:
+            totals["shards_written"] = c["shards"]["written"]
         stages = [self.done[s] for s in STAGES if s in self.done]
         manifest = {"tool": "run_pipeline.py", "run_id": self.cfg["run_id"], "config": self.cfg,
                     "code_sha256": sha256(Path(__file__)), "git_commit": git_commit(),

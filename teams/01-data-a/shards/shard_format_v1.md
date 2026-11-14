@@ -60,6 +60,7 @@ A shard is made from one part of the pipeline's final folder, in the order TSAI 
 
 ```
 <run>/pipeline_manifest.json                       run_pipeline.py's record of the run
+<run>/cleaning_pipeline.json                       the processing behind the run's shards (the pipeline's shard stage writes it)
 <run>/final/<split>/<pack>/<part>.parquet          what F2 kept (the shard writer's --input)
 <run>/final/<split>/<pack>/<part>.parquet.f2.json  F2's report for the part
 <run>/deduped/apply_dedup_summary.json             what apply removed, with the sha256 of every part it read and wrote
@@ -86,9 +87,9 @@ What the writer records from it:
 
 | Where | What |
 |---|---|
-| `cleaning_pipeline.json` | `clean_py_sha256`, `f2_set_sha256`, `dedup` (`remove_list_sha256`, `remove_list_rows`), `pipeline` (`run_id`, `manifest_sha256`, `git_commit`). It describes the run, so every shard of a run has the same file; an `--out` holding one from another run is refused |
+| `cleaning_pipeline.json` | written by the pipeline's shard stage next to the manifest (`provenance.py --write-record` does the same by hand); the writer checks it against the manifest and the stage outputs and copies it into `--out`, byte for byte, so the sha256 in the manifest is the run's. It holds `clean_py_sha256`, `f2_set_sha256`, `dedup` (`remove_list_sha256`, `remove_list_rows`). It describes the processing, not the run log (no link to `pipeline_manifest.json`, which is rewritten after every stage), so every shard made from the same processing has the same file; an `--out` holding one from other processing (another `clean.py`, F2 set or remove list) is refused |
 | `inputs_sha256` | the sha256 of the line `<raw part sha256> <split>/<pack>/<part>.parquet` |
-| `<shard_id>.quality_report.json`, `upstream` | the part's counts (cleaned, removed by dedup, dropped by F2, final); the doc_ids dedup removed, with their group and rule; the doc_ids F2 dropped, with benchmark item IDs and offsets. The whole input part, whether or not all its rows fit in the shard. Never text |
+| `<shard_id>.quality_report.json`, `upstream` | the pipeline `run_id`; the part's counts (cleaned, removed by dedup, dropped by F2, final); the doc_ids dedup removed, with their group and rule; the doc_ids F2 dropped, with benchmark item IDs and offsets. The whole input part, whether or not all its rows fit in the shard. Never text |
 
 `domain` is `--domain`, else clean.py's family of the pack (code, english, math, sci, indic); a pack clean.py does not list needs `--domain`.
 
@@ -97,19 +98,24 @@ has `train` and `validation` only. Whether a held-out part becomes `validation` 
 
 ## Sharding a whole run
 
+`run_pipeline.py` runs this as its last stage when `stages.shards` is in its config (`pipeline/README.md`): it writes
+`<run>/cleaning_pipeline.json`, runs `run_shards.py` on `final/`, records the stage in `pipeline_manifest.json` and rewrites
+the manifest, like every stage; a part that failed or was skipped stops the run. By hand:
+
 `run_shards.py --input <run>/final --manifest <run>/pipeline_manifest.json --tokenizer <tokenizer.json> --out <dir>` hands every
-`<split>/<pack>/<part>.parquet` of the final folder to the writer (it names no split: the writer refuses what it does not shard).
+`<split>/<pack>/<part>.parquet` of the final folder to the writer, except parts in a `heldout`, `validation` or `val` folder:
+those are reported as `not_sharded`, which is not an error (the writer refuses a non-train part as well).
 
 - **Pack metadata:** `pack_table.json` has a `language`, `script`, `domain` and `lane` for each of the 38 week-2 packs. A pack
   that is not in it, or has a null field, is skipped, not guessed: a manifest never changes. `language` is the programming
   language for `code-*` packs and the pack's `lang_label` otherwise; `lane` is null for every non-code pack until the training plan names the lanes.
 - **Shard id:** `<pack>-<split>-<part number>`, so `part-00001.parquet` is `<pack>-train-000001`. The files are written flat in `--out`.
 - **Safety:** if any shard it would write is already in `--out`, nothing is written. A part that fails is recorded and the run
-  goes on; the exit code is 1 unless every part was written.
-- **`shards_summary.json`:** per part, `status` (written, failed, skipped), `shard_id`, docs, tokens, `rows_read` of
+  goes on; the exit code is 1 unless every part was written or `not_sharded`.
+- **`shards_summary.json`:** per part, `status` (written, failed, skipped, not_sharded), `shard_id`, docs, tokens, `rows_read` of
   `rows_in_part`, `truncated` and the docs left out. A part is truncated when its rows did not all fit in `--tokens`:
   the writer makes one shard per part and drops the rest. A second run into the same `--out` (with `--pack`) adds to the
-  summary; one made for another pipeline run is refused.
+  summary; one made for another `run_id` is refused. The summary also records the `run_id` and the sha256 of `cleaning_pipeline.json`.
 
 ## Manifest fields
 

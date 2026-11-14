@@ -6,7 +6,7 @@
 
 Input: one part of the pipeline's final folder (run_pipeline.py: clean, dedup, then F2), and the run's pipeline_manifest.json.
 provenance.py checks the part's chain back to the raw sample part (F2 report, apply, remove list, clean job) and stops
-when a link breaks; what it returns goes into cleaning_pipeline.json and the quality report. The split comes from the
+when a link breaks; what it returns checks cleaning_pipeline.json and goes into the quality report. The split comes from the
 part's folder: train. A held-out part is refused until G3 and G9 say what happens to it (the format has train and
 validation only). --domain defaults to clean.py's family of the pack. Docs are taken in order until the next one would
 pass --tokens; a doc is never split.
@@ -24,8 +24,9 @@ A doc is left out, counted, and listed by doc_id in the quality report when:
 Checks after writing: G6's open_shard reads the .bin, sizes and index match the manifest, every id < 131,072, and the only
 special ids in the shard are the EOS at the end of each doc.
 Writes <dir>/<shard_id>.{bin,idx.npy,docs.parquet,json}, cleaning_pipeline.json, <shard_id>.quality_report.json and <shard_id>.dump.md
-(IDs and counts only, never text). cleaning_pipeline.json describes the run (clean.py, F2 set, remove list, manifest), so
-every shard of one run gets the same file; a --out that already holds one from another run is refused. The quality report's
+(IDs and counts only, never text). cleaning_pipeline.json describes the processing (clean.py, F2 set, remove list): run_pipeline.py's shard stage writes it
+next to the manifest, and the writer checks it against what provenance.py derives and copies it, so every shard of one
+run gets the same file; a --out that already holds one from other processing is refused. The quality report's
 "upstream" block lists the doc_ids this part lost to dedup (with group and rule) and to F2 (with benchmark item IDs and
 offsets). Needs numpy, pyarrow, tokenizers and torch (G6's dataio imports torch).
 """
@@ -33,6 +34,7 @@ import argparse
 import hashlib
 import json
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -123,12 +125,15 @@ def main(argv=None):
     norm = tok.normalizer.normalize_str if tok.normalizer is not None else (lambda t: t)  # a Sequence normalizer has len 0, so it is falsy
     shard_id = f"{pack_id}-{split}-{a.index:06d}"
     pipeline = a.out / "cleaning_pipeline.json"
-    run_record = {"clean_py_sha256": info["clean"]["clean_py_sha256"], "f2_set_sha256": info["f2"]["set_sha256"],
-                  "dedup": {"remove_list_sha256": info["dedup"]["remove_list_sha256"],
-                            "remove_list_rows": info["dedup"]["remove_list_rows"]},
-                  "pipeline": info["pipeline"]}
-    if pipeline.is_file() and json.loads(pipeline.read_text(encoding="utf-8")) != run_record:
-        sys.exit(f"shard_writer: {pipeline} describes another pipeline run than {a.manifest}; use a new --out")
+    run_file = a.manifest.resolve().parent / "cleaning_pipeline.json"  # written by run_pipeline.py's shard stage
+    if not run_file.is_file():
+        sys.exit(f"shard_writer: {run_file} not found: run_pipeline.py's shard stage writes it "
+                 f"(or: python teams/01-data-a/shards/provenance.py --manifest {a.manifest} --write-record)")
+    if json.loads(run_file.read_text(encoding="utf-8")) != info["record"]:
+        sys.exit(f"shard_writer: {run_file} is not what {a.manifest} and its stage outputs give now; write it again "
+                 "(provenance.py --write-record)")
+    if pipeline.is_file() and pipeline.read_bytes() != run_file.read_bytes():
+        sys.exit(f"shard_writer: {pipeline} describes other processing than {run_file} (another clean.py, F2 set or remove list); use a new --out")
     a.out.mkdir(parents=True, exist_ok=True)
 
     table = pq.read_table(a.input, columns=["doc_id", "text", "lang_label"])
@@ -170,7 +175,7 @@ def main(argv=None):
     write_shard(bin_path, [t for d in docs for t in d])
     np.save(idx_path, starts)
     pq.write_table(pa.Table.from_pylist(rows), meta_path)
-    pipeline.write_text(json.dumps(run_record, indent=2) + "\n", encoding="utf-8", newline="\n")
+    shutil.copyfile(run_file, pipeline)  # the run's file, byte for byte: its sha256 is the manifest's cleaning_pipeline_sha256
     tpc = np.array([r["n_tokens"] / max(r["n_chars"], 1) for r in rows])
     worst = sorted(rows, key=lambda r: -r["n_tokens"] / max(r["n_chars"], 1))[:5]
     report = a.out / f"{shard_id}.quality_report.json"
@@ -181,7 +186,7 @@ def main(argv=None):
                             "p99": round(float(np.percentile(tpc, 99)), 3), "max": round(float(tpc.max()), 3)},
         "most_tokens_per_char": [{"doc_id": r["doc_id"], "n_tokens": r["n_tokens"], "n_chars": r["n_chars"]} for r in worst],
         "upstream": {"input_part": part_path, "raw_input_sha256": info["raw_input"]["sha256"], "final_sha256": info["final"]["sha256"],
-                     "counts": info["counts"], "removed_by_dedup": info["dedup"]["removed"],
+                     "run_id": info["pipeline"]["run_id"], "counts": info["counts"], "removed_by_dedup": info["dedup"]["removed"],
                      "dropped_by_f2": info["f2"]["dropped"]},  # the whole input part, whether or not all its rows fit in the shard
     }, indent=2) + "\n", encoding="utf-8", newline="\n")
 

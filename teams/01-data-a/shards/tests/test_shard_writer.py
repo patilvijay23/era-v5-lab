@@ -129,7 +129,8 @@ def test_the_manifest_records_the_pipeline_run(tmp_path, monkeypatch):
     cp = json.loads((out / "cleaning_pipeline.json").read_text(encoding="utf-8"))
     assert cp["clean_py_sha256"] == CLEAN_SHA and cp["f2_set_sha256"] == m["decontam_set_sha256"]
     assert cp["dedup"] == {"remove_list_sha256": sha(tmp_path / "pipeline" / "dedup" / "remove_list.csv"), "remove_list_rows": 1}
-    assert cp["pipeline"]["manifest_sha256"] == sha(run / "pipeline_manifest.json") and cp["pipeline"]["run_id"] == "test-run"
+    assert sorted(cp) == ["clean_py_sha256", "dedup", "f2_set_sha256"]  # the processing only: no link to the run log
+    assert q["run_id"] == "test-run"
     assert m["cleaning_pipeline_sha256"] == sha(out / "cleaning_pipeline.json")
     assert m["inputs_sha256"] == hashlib.sha256(f"{raw_sha('train', part)} train/{part}\n".encode()).hexdigest()
     meta = pq.read_table(out / m["sample_metadata_uri"]).to_pylist()
@@ -153,10 +154,10 @@ def test_a_heldout_part_is_refused(tmp_path, monkeypatch):
         shard(run, part, tmp_path / "out", "--any-tokenizer", "--domain", "web", split="heldout")
 
 
-def test_an_out_folder_of_another_pipeline_run_is_refused(tmp_path, monkeypatch):
+def test_an_out_folder_with_other_processing_is_refused(tmp_path, monkeypatch):
     write(tmp_path, monkeypatch, DOCS, "--any-tokenizer")
     other, part = run_of(tmp_path / "other", monkeypatch, DOCS, removed_rows=[1])  # a different remove list
-    with pytest.raises(SystemExit, match="another pipeline run"):
+    with pytest.raises(SystemExit, match="other processing"):
         shard(other, part, tmp_path / "out", "--any-tokenizer", "--domain", "web")
 
 
@@ -177,3 +178,29 @@ def test_a_pack_clean_has_no_family_for_needs_a_domain(tmp_path, monkeypatch):
     run, part = run_of(tmp_path / "pipeline", monkeypatch, DOCS[:1])
     with pytest.raises(SystemExit, match="give --domain"):
         shard(run, part, tmp_path / "out", "--any-tokenizer")
+
+
+def test_without_the_runs_cleaning_pipeline_file_nothing_is_written(tmp_path, monkeypatch):
+    run, part = run_of(tmp_path / "pipeline", monkeypatch, DOCS)
+    (run / "cleaning_pipeline.json").unlink()
+    with pytest.raises(SystemExit, match="cleaning_pipeline.json not found: run_pipeline.py's shard stage writes it"):
+        shard(run, part, tmp_path / "out", "--any-tokenizer", "--domain", "web")
+    assert not (tmp_path / "out").exists()
+
+
+def test_an_edited_cleaning_pipeline_file_is_refused(tmp_path, monkeypatch):
+    run, part = run_of(tmp_path / "pipeline", monkeypatch, DOCS)
+    f = run / "cleaning_pipeline.json"
+    record = json.loads(f.read_text(encoding="utf-8"))
+    record["clean_py_sha256"] = "0" * 64
+    f.write_text(json.dumps(record), encoding="utf-8")
+    with pytest.raises(SystemExit, match="is not what .* give now"):
+        shard(run, part, tmp_path / "out", "--any-tokenizer", "--domain", "web")
+    assert not (tmp_path / "out").exists()
+
+
+def test_the_shard_folder_gets_the_runs_file_byte_for_byte(tmp_path, monkeypatch):
+    run, part = run_of(tmp_path / "pipeline", monkeypatch, DOCS)
+    m = shard(run, part, tmp_path / "out", "--any-tokenizer", "--domain", "web")
+    assert (tmp_path / "out" / "cleaning_pipeline.json").read_bytes() == (run / "cleaning_pipeline.json").read_bytes()
+    assert m["cleaning_pipeline_sha256"] == sha(run / "cleaning_pipeline.json")

@@ -4,19 +4,21 @@
       --tokenizer <c3>/tokenizer.json --out <dir> [--pack code-go ...] [--tokens N] [--any-tokenizer]
 
 --input is the run's final folder: <input>/<split>/<pack>/<part>.parquet, the layout run_pipeline.py gives it. Every part
-found is handed to shard_writer.py, which decides what it accepts (the split comes from the folder name; this script
-names no split). Language, script, domain and lane come from the pack's row in pack_table.json; a pack that is not in the
+found is handed to shard_writer.py (the split comes from the folder name), except a part in a folder named in
+NOT_SHARDED (heldout, validation, val): it is reported as "not_sharded", which is not an error, because what a held-out
+part becomes is for G3 and G9 to say. Language, script, domain and lane come from the pack's row in pack_table.json; a pack that is not in the
 table, or has a null field, is not sharded (status "skipped"). The shard number is the part's number: part-00001.parquet
 is <pack>-<split>-000001.
 
 Before anything is written it checks that none of the shards it would write is already in --out, and stops if one is.
-A part the writer stops on (a broken link in its chain, a held-out part, ...) is recorded as "failed" and the run goes on.
-It exits 1 unless every part was written.
+A part the writer stops on (a broken link in its chain, ...) is recorded as "failed" and the run goes on.
+It exits 1 unless every part was written or not_sharded.
 
 Writes <out>/shards_summary.json: for each part its status, shard_id, docs, tokens, rows read of the rows in the part,
 "truncated" (the writer fills a shard up to --tokens and drops the rest of the part; several shards per part are not
-written yet), and the docs left out. A second run into the same --out with --pack adds to the summary; one made for another
-pipeline run is refused. Needs what shard_writer.py needs.
+written yet), and the docs left out, with the run_id and the sha256 of cleaning_pipeline.json. A second run into the same --out
+with --pack adds to the summary; one made for another run_id is refused, and the writer refuses other processing part by part.
+Needs what shard_writer.py needs.
 """
 import sys
 sys.dont_write_bytecode = True
@@ -30,6 +32,7 @@ import pack_table  # noqa: E402
 import shard_writer  # noqa: E402
 
 SUMMARY = "shards_summary.json"
+NOT_SHARDED = ("heldout", "validation", "val")  # split folders that are left alone (shard_writer.py also refuses a non-train part)
 
 
 def find_parts(final, packs=()):
@@ -91,44 +94,50 @@ def main(argv=None):
     parts = find_parts(a.input, a.pack)
     if not parts:
         sys.exit(f"run_shards: no <split>/<pack>/<part>.parquet in {a.input}" + (f" for {a.pack}" if a.pack else ""))
-    manifest_sha = hashlib.sha256(a.manifest.read_bytes()).hexdigest()
+    run_id = json.loads(a.manifest.read_text(encoding="utf-8")).get("run_id")
     summary_path = a.out / SUMMARY
-    summary = {"manifest_sha256": manifest_sha, "parts": {}}
+    summary = {"parts": {}}
     if summary_path.is_file():
         summary = json.loads(summary_path.read_text(encoding="utf-8"))
-        if summary["manifest_sha256"] != manifest_sha:
-            sys.exit(f"run_shards: {summary_path} is from another pipeline run than {a.manifest}; use a new --out")
-    taken = [f"{sid}.json" for split, pack, path in parts if (sid := shard_id_of(split, pack, path)) and (a.out / f"{sid}.json").exists()]
+        if summary["run_id"] != run_id:
+            sys.exit(f"run_shards: {summary_path} is from another pipeline run ({summary['run_id']}) than {a.manifest} ({run_id}); use a new --out")
+    taken = [f"{sid}.json" for split, pack, path in parts if split not in NOT_SHARDED and (sid := shard_id_of(split, pack, path)) and (a.out / f"{sid}.json").exists()]
     if taken:
         sys.exit(f"run_shards: already in {a.out}: {', '.join(taken)}. Nothing was written; use a new --out, or --pack for the rest")
 
     this_run = []
     for split, pack, path in parts:
         name, sid = f"{split}/{pack}/{path.name}", shard_id_of(split, pack, path)
-        entry = {"pack_id": pack, "shard_id": sid}
-        try:
-            row = pack_table.row(pack, table)
-        except pack_table.PackTableError as e:
-            entry.update(status="skipped", reason=str(e))
+        if split in NOT_SHARDED:
+            entry = {"pack_id": pack, "status": "not_sharded", "reason": f"{split} is not sharded (held-out data: G3 and G9 decide)"}
         else:
-            if sid is None:
-                entry.update(status="failed", reason=f"{path.name} is not named part-<number>.parquet")
+            entry = {"pack_id": pack, "shard_id": sid}
+            try:
+                row = pack_table.row(pack, table)
+            except pack_table.PackTableError as e:
+                entry.update(status="skipped", reason=str(e))
             else:
-                manifest, why = write_one(path, a, row, int(sid.rsplit("-", 1)[1]))
-                entry.update(status="failed", reason=why) if why else entry.update(entry_of(sid, manifest, a.out))
+                if sid is None:
+                    entry.update(status="failed", reason=f"{path.name} is not named part-<number>.parquet")
+                else:
+                    manifest, why = write_one(path, a, row, int(sid.rsplit("-", 1)[1]))
+                    entry.update(status="failed", reason=why) if why else entry.update(entry_of(sid, manifest, a.out))
         summary["parts"][name] = entry
         this_run.append(entry["status"])
         note = f"{entry['docs']} docs, {entry['tokens']} tokens" + (" TRUNCATED" if entry["truncated"] else "") \
             if entry["status"] == "written" else entry["reason"]
-        print(f"{entry['status']:8} {name}: {note}", file=sys.stderr if entry["status"] != "written" else sys.stdout)
+        print(f"{entry['status']:8} {name}: {note}", file=sys.stderr if entry["status"] in ("failed", "skipped") else sys.stdout)
 
+    pipeline = a.out / "cleaning_pipeline.json"  # written by the writer with the run's first shard
+    summary = {"run_id": run_id, "cleaning_pipeline_sha256": hashlib.sha256(pipeline.read_bytes()).hexdigest() if pipeline.is_file() else None,
+               "parts": summary["parts"]}
     entries = summary["parts"].values()
-    summary["counts"] = {s: sum(e["status"] == s for e in entries) for s in ("written", "failed", "skipped")}
+    summary["counts"] = {s: sum(e["status"] == s for e in entries) for s in ("written", "failed", "skipped", "not_sharded")}
     summary["counts"]["truncated"] = sum(bool(e.get("truncated")) for e in entries)
     a.out.mkdir(parents=True, exist_ok=True)
     summary_path.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8", newline="\n")
     print(json.dumps(summary["counts"]))
-    return 0 if set(this_run) == {"written"} else 1  # this run's parts, not those an earlier run left in the summary
+    return 0 if set(this_run) <= {"written", "not_sharded"} else 1  # this run's parts, not those an earlier run left in the summary
 
 
 if __name__ == "__main__":

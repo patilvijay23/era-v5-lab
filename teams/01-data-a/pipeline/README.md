@@ -12,10 +12,10 @@ The **Clean → Dedup → F2** pipeline of Data A, as one command. It chains the
 
 | | |
 |---|---|
-| **Order** | clean → overlap → dedup → **apply the remove list** → **F2** → **survivor loss** |
+| **Order** | clean → overlap → dedup → **apply the remove list** → **F2** → **survivor loss** → **shards** (optional) |
 | **In** | the cleaned parts (`train/`, `heldout/`) and the outputs of overlap and dedup |
 | **Out** | filtered Parquet in the same layout, same schema, unchanged text · `pipeline_manifest.json` |
-| **New here** | `apply_dedup.py` · `survivor_loss.py` · `run_pipeline.py` · `pipeline.json` · 57 tests |
+| **New here** | `apply_dedup.py` · `survivor_loss.py` · `run_pipeline.py` · `pipeline.json` · 69 tests |
 | **Reused, never copied** | `spec_v1/run_clean.py` (#244) · `dedup/overlap.py`, `dedup/dedup.py` (#255) · `spec_v1/run_f2.py` (#35) |
 | **Needs** | Python 3.9+ with `pyarrow`; `pytest` for the tests |
 
@@ -198,7 +198,8 @@ A document whose F2 check raised an error is also kept out of the output, so it 
     "overlap": { "mode": "adopt", "output": "out/overlap" },
     "dedup":   { "mode": "adopt", "output": "out/dedup" },
     "apply":   { "link": true },             // hard-link untouched parts (no extra disk)
-    "f2":      { "script": "teams/01-data-a/spec_v1/run_f2.py", "workers": 4 }
+    "f2":      { "script": "teams/01-data-a/spec_v1/run_f2.py", "workers": 4 },
+    "shards":  { "tokenizer": "<c3>/tokenizer.json" }   // optional: leave it out and the run stops after survivor loss
   }
 }
 ```
@@ -210,6 +211,10 @@ A document whose F2 check raised an error is also kept out of the output, so it 
 | `stages.<…>.output` | folder | where the stage's files are, in both modes |
 | `stages.f2.script` | path | `run_f2.py` (default `teams/01-data-a/spec_v1/run_f2.py`, from #35) |
 | `stages.f2.workers` | whole number ≥ 1 (default 1) | **1**: one `run_f2.py` per split. **N > 1**: up to N processes at once, one per pack folder, with one log per pack |
+| `stages.shards.tokenizer` | file | G3's C3 `tokenizer.json`. Setting `stages.shards` adds the shard stage after survivor loss; without it the run stops there |
+| `stages.shards.out` | folder (default `<run>/shards`) | where the shards, `cleaning_pipeline.json` and `shards_summary.json` go |
+| `stages.shards.tokens` · `.packs` · `.pack_table` | optional | passed to `run_shards.py`: token limit per shard, only these packs, a pack table other than `shards/pack_table.json` |
+| `stages.shards.script` · `.any_tokenizer` | optional | `run_shards.py` (default `teams/01-data-a/shards/run_shards.py`); `any_tokenizer: true` accepts another tokenizer (tests only) |
 | `stages.apply.link` | `true` (default) · `false` | hard-link untouched parts instead of copying them; falls back to a copy across file systems |
 
 Scripts run with `python -I`, which ignores user site-packages and `PYTHONPATH`: install `pyarrow` and the rest into the environment itself, not with `pip install --user`. Running overlap locally needs Linux or macOS (`overlap.py` uses `resource`). Adopting TSAI's overlap works anywhere.
@@ -249,7 +254,7 @@ flowchart TD
 ```text
 out/pipeline/<run_id>/
 ├── pipeline_manifest.json             the record of the run
-├── logs/                              one log per script: overlap.log, f2_train.log or f2_train_<pack>.log, …
+├── logs/                              one log per script: overlap.log, f2_train.log or f2_train_<pack>.log, shards.log, …
 ├── deduped/                           04 apply
 │   ├── train/<pack>/part-NNNNN.parquet
 │   ├── heldout/<pack>/part-NNNNN.parquet      hard links: dedup never removes held-out
@@ -258,9 +263,13 @@ out/pipeline/<run_id>/
 │   ├── train/<pack>/part-NNNNN.parquet  (+ .f2.json)
 │   ├── train/f2_summary.json
 │   └── heldout/…
-└── report/                            06 survivor loss
-    ├── survivor_loss.csv
-    └── survivor_loss_summary.json
+├── report/                            06 survivor loss
+│   ├── survivor_loss.csv
+│   └── survivor_loss_summary.json
+├── cleaning_pipeline.json             07 shards, first: clean.py sha256, F2 set, dedup remove list (what every shard of the run says)
+└── shards/                            07 shards: <pack>-<split>-NNNNNN.{bin,idx.npy,docs.parquet,json,quality_report.json,dump.md},
+    ├── cleaning_pipeline.json         a copy of the run's file, and shards_summary.json
+    └── shards_summary.json
 ```
 
 <details>
@@ -279,10 +288,11 @@ out/pipeline/<run_id>/
     { "stage": "dedup",   "counts": { "remove_list_rows": …, "removed": …, "heldout_removed": 0, "groups": … } },
     { "stage": "apply",   "code_sha256": "…", "counts": { "rows": …, "removed": …, "kept": …, "kept_by_split": { … } } },
     { "stage": "f2",      "set_sha256": "2826a3b8…", "counts": { "rows": …, "kept": …, "dropped_by_f2": …, "errors": 0, "by_split": { … } } },
-    { "stage": "survivor_loss", "counts": { "lost": …, "partly_hit": …, "untouched": …, … } }
+    { "stage": "survivor_loss", "counts": { "lost": …, "partly_hit": …, "untouched": …, … } },
+    { "stage": "shards",  "cleaning_pipeline_sha256": "…", "counts": { "written": …, "failed": 0, "skipped": 0, "not_sharded": …, "truncated": …, "parts": … } }
   ],
   "checks": [ { "stage": "dedup", "check": "dedup used this overlap run", "ok": true, "detail": "…" }, … ],
-  "totals": { "cleaned": …, "removed_by_dedup": …, "dropped_by_f2": …, "final": … }
+  "totals": { "cleaned": …, "removed_by_dedup": …, "dropped_by_f2": …, "final": …, "shards_written": … }
 }
 ```
 
@@ -291,6 +301,8 @@ A stage's **digest** is the sha256 over the sorted `relative/path<TAB>hash` of e
 </details>
 
 ### Shards
+
+With `stages.shards` in the config, `run_pipeline.py` runs shards as its last stage, after the manifest holds every earlier stage. It first writes `<run>/cleaning_pipeline.json` (the `clean.py` sha256, the F2 fingerprint set and the dedup remove list: the processing behind every shard of the run, with no link to the manifest, which is rewritten after every stage). It then runs `shards/run_shards.py` on `final/`, with its log in `logs/shards.log`, and records the stage and rewrites the manifest like any other stage. The stage stops the run if a part failed or was skipped (a pack without a lane in `shards/pack_table.json`; restrict the run with `stages.shards.packs`), if nothing was written, or if the summary is not this run's. Held-out parts are not sharded. `--from shards` runs just this stage on a finished run, into an `--out` that holds no shards yet.
 
 `shards/shard_writer.py` makes one shard from one part of `final/`. Before it writes anything, `shards/provenance.py` checks the part's chain back to the raw sample part (`shards/shard_format_v1.md`, "Where a shard's input comes from").
 
@@ -303,7 +315,7 @@ python -I teams/01-data-a/shards/shard_writer.py --input <run>/final/train/<pack
 | Argument | Meaning |
 |---|---|
 | `--input` | a part under `<run>/final/<split>/<pack>/`; only `train` parts are sharded for now |
-| `--manifest` | the run's `pipeline_manifest.json` |
+| `--manifest` | the run's `pipeline_manifest.json`; `cleaning_pipeline.json` must sit next to it (the shard stage writes it, or `python -I teams/01-data-a/shards/provenance.py --manifest <run>/pipeline_manifest.json --write-record`) |
 | `--tokenizer` | G3's frozen C3 `tokenizer.json` (`--any-tokenizer` accepts another one, for tests only) |
 | `--language`, `--script`, `--lane` | recorded in the shard's manifest |
 | `--domain` | optional; default: the pack's family in `clean.py` |
@@ -319,11 +331,11 @@ python -I teams/01-data-a/shards/run_shards.py --input <run>/final --manifest <r
 
 | Argument | Meaning |
 |---|---|
-| `--input` | the run's `final/` folder: `<split>/<pack>/<part>.parquet`. Every part found goes to the writer, which refuses what it does not shard |
+| `--input` | the run's `final/` folder: `<split>/<pack>/<part>.parquet`. Every part found goes to the writer, except those in a `heldout`, `validation` or `val` folder (reported as `not_sharded`, not an error: held-out data is not sharded yet) |
 | `--manifest`, `--tokenizer`, `--out`, `--tokens` | as for the writer |
 | `--pack` | only this pack (repeatable) |
 
-Language, script, domain and lane come from the pack's row in `shards/pack_table.json`; a pack that is not in the table, or has a null field, is skipped. The shard number is the part's number (`part-00001.parquet` becomes `<pack>-train-000001`). Nothing is written if one of the shards is already in `--out`. A part the writer stops on is recorded and the run goes on; the exit code is 1 unless every part was written. `<out>/shards_summary.json` lists each part with its status, shard id, docs, tokens, rows read of the rows in the part, and `truncated` (the writer fills one shard per part up to `--tokens` and drops the rest).
+Language, script, domain and lane come from the pack's row in `shards/pack_table.json`; a pack that is not in the table, or has a null field, is skipped. The shard number is the part's number (`part-00001.parquet` becomes `<pack>-train-000001`). Nothing is written if one of the shards is already in `--out`. A part the writer stops on is recorded and the run goes on; the exit code is 1 unless every part was written or `not_sharded`. `<out>/shards_summary.json` lists each part with its status, shard id, docs, tokens, rows read of the rows in the part, and `truncated` (the writer fills one shard per part up to `--tokens` and drops the rest).
 
 <br>
 
@@ -356,14 +368,14 @@ Smoke run on 13 Nov: a Windows laptop, one process, two packs of cleaned sample 
 ## Tests
 
 ```bash
-python -m pytest teams/01-data-a/pipeline/tests -q      # 57 passed
+python -m pytest teams/01-data-a/pipeline/tests -q      # 69 passed
 ```
 
 | File | Tests | Covers |
 |---|:-:|---|
 | `test_apply_dedup.py` | 25 | exact removal · byte copies · hard links (and `--copy`) · the same doc_id in two parts · Windows `\` paths · 8 bad lists, each with the bad row in the last part processed and nothing written · an unreadable or column-less part · row-group boundaries, with zstd kept · stale outputs · a corrupted output redone on rerun · train-only · resume · no text in the summary · CLI |
 | `test_survivor_loss.py` | 9 | lost · partly hit · untouched · without survivor · split + part + doc_id matching · F2 errors count as dropped · no drops · an uncovered part · mixed fingerprint sets · CLI |
-| `test_run_pipeline.py` | 23 | the full chain (13 → 11 → 9) · parallel F2 gives the same result as one process · a crashed pack is named and a rerun recovers · bad `workers` values · identical runs give identical digests · `--from` keeps earlier checks · a changed adopted folder · dedup from another overlap run · overlap of other parts · count mismatch · held-out removed · F2 errors · F2 that read other files · stale F2 output · train-only · `run` mode success and failure · a bad config stopped before anything runs · CLI |
+| `test_run_pipeline.py` | 35 | the full chain (13 → 11 → 9) · parallel F2 gives the same result as one process · a crashed pack is named and a rerun recovers · bad `workers` values · identical runs give identical digests · `--from` keeps earlier checks · a changed adopted folder · dedup from another overlap run · overlap of other parts · count mismatch · held-out removed · F2 errors · F2 that read other files · stale F2 output · train-only · `run` mode success and failure · a bad config stopped before anything runs · CLI |
 
 The data is made up inside the tests (`conftest.py`), in dedup's real formats (`G000001` group ids, rule numbers 0–4). The runner's tests use `tests/fake_run_f2.py`, a stand-in with `run_f2.py`'s command line, its output files and its exit codes. The real F2 needs G9's full set (about 1.1 GB) and is tested in its own PR, and on real data above.
 

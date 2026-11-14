@@ -18,6 +18,7 @@ sys.path.insert(0, str(SHARDS.parent / "pipeline"))
 sys.path.insert(0, str(SHARDS))
 from conftest import HEADER  # noqa: E402  (pipeline/tests/conftest.py)
 from test_run_pipeline import GROUP_HEADER, overlap_folder, write_config, write_csv  # noqa: E402
+import provenance  # noqa: E402
 import run_pipeline as rp  # noqa: E402
 
 CLEAN_SHA = "c" * 64
@@ -44,11 +45,13 @@ def write_cleaned(root, parts):
     (root / "job_summary.json").write_text(json.dumps({"clean_sha256": CLEAN_SHA, "parts": entries}), encoding="utf-8")
 
 
-def make_run(folder, monkeypatch, parts, removed=(), f2_drop=()):
+def make_run(folder, monkeypatch, parts, removed=(), f2_drop=(), shards=None):
     """Run the pipeline in `folder` over `parts` and return the run's folder (<folder>/runs/test-run).
 
     removed: [(split, part, row_in_part)] that dedup removes, each as a group of two (the other member is the survivor).
-    f2_drop: doc_ids the stand-in F2 drops."""
+    f2_drop: doc_ids the stand-in F2 drops.
+    shards: a stages.shards config; the run then goes through the real shard stage (which writes cleaning_pipeline.json),
+    otherwise this writes it as the stage does."""
     for k in ("FAKE_F2_ERROR", "FAKE_F2_BAD_SHA", "FAKE_F2_CRASH"):
         monkeypatch.delenv(k, raising=False)
     monkeypatch.setenv("FAKE_F2_DROP", ",".join(f2_drop))
@@ -72,6 +75,10 @@ def make_run(folder, monkeypatch, parts, removed=(), f2_drop=()):
     (dedup / "dedup_summary.json").write_text(json.dumps({
         "status": "complete", "overlap_run": {"documents_all": total, "checked_sha256": checked}, "documents_all": total,
         "removed": len(removals), "heldout_removed": 0}), encoding="utf-8")
-    config = write_config(folder / "pipeline.json", {"cleaned": cleaned, "overlap": overlap, "dedup": dedup})
+    config = write_config(folder / "pipeline.json", {"cleaned": cleaned, "overlap": overlap, "dedup": dedup},
+                          **({"shards": shards} if shards else {}))
     rp.run(config)
-    return folder / "runs" / "test-run"
+    run = folder / "runs" / "test-run"
+    if not shards:
+        provenance.write_record(run / "pipeline_manifest.json")  # what run_pipeline.py's shard stage does first
+    return run
