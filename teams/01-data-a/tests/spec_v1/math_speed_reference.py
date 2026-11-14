@@ -1,4 +1,4 @@
-"""Frozen speed reference: DA-C1-001 as it was before its speed-up (clean.py 11da63a27cca, specv1.md medicine 55).
+"""Frozen speed references of the math rules, each as it was before its speed-up (see the docstring of each function).
 
 Keep this body unchanged while testing that the faster rule gives the same result. Copied verbatim from the old clean.py.
 """
@@ -6,7 +6,8 @@ import re
 
 
 def c1_reference():
-    """The old medicine_c1 and its three regexes. Returns the namespace so tests can reach C1_LINE and C1_SITE."""
+    """DA-C1-001 as it was before its speed-up (clean.py 22d818c72c9f, specv1.md medicine 55): the old medicine_c1 and its three
+    regexes. Returns the namespace so tests can reach C1_LINE and C1_SITE."""
     # a whole line that is generic site chrome
     C1_LINE = re.compile(
         r"(?i)\s*(?:More Similar Questions|Similar Questions|Related (?:Questions|Posts|Articles)|Share (?:this|on \w+)|"
@@ -42,3 +43,25 @@ def c1_reference():
         return C1_REPLIES.sub("", "\n".join(keep))
 
     return {"medicine_c1": medicine_c1, "C1_LINE": C1_LINE, "C1_SITE": C1_SITE, "C1_REPLIES": C1_REPLIES}
+
+
+def d3_reference():
+    """DA-D3-005 as it was before its speed-up (clean.py 6f99ff4d9ab4, specv1.md medicine 53): the old medicine_d3 and its regex."""
+    # Cyrillic, Indic, kana, CJK, Hangul, Arabic (Greek is left out: Greek letters are maths)
+    D3_FOREIGN = re.compile("[\u0400-\u04ff\u0900-\u0dff\u3040-\u30ff\u4e00-\u9fff\uac00-\ud7af\u0600-\u06ff]")
+
+    def medicine_d3(text):
+        out, foreign = [], 0
+        for l in text.split("\n"):
+            letters = sum(c.isalpha() for c in l)
+            f = len(D3_FOREIGN.findall(l))
+            if letters and f / letters > 0.5:      # a line that is mostly foreign script is removed
+                foreign += f
+                continue
+            out.append(l)
+        total = sum(c.isalpha() for c in text)
+        if total and foreign / total > 0.3:        # mostly not English: that is D1, drop
+            return ("drop", text)
+        return "\n".join(out)
+
+    return {"medicine_d3": medicine_d3, "D3_FOREIGN": D3_FOREIGN}
