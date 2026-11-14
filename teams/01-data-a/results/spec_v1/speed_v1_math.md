@@ -35,10 +35,10 @@ The "both fixes" row is the baseline (fix 1's before) against the last row's aft
 
 | # | rule | output sha256 | harm tests | pytest | documents changed, 500 docs each: math-finemath / math-megamath | `clean.py` before | `clean.py` after | commit |
 |---|---|---|---|---|---|---|---|---|
-| 1 | `DA-C1-001` | same, 13 of 13 | unchanged | 2242 passed | ran on 487, fixed 97, dropped 0 / rule does not run | `22d818c72c9f` | `6f99ff4d9ab4` | `c4f54c7` |
-| 2 | `DA-D3-005` | same, 13 of 13 | unchanged | 2299 passed | ran on 500, fixed 7, dropped 1 / ran on 490, fixed 3, dropped 0 | `6f99ff4d9ab4` | `8cc7458cf3bd` | this commit |
+| 1 | `DA-C1-001` | same, 13 of 13 | unchanged | 2242 passed | ran on 487, fixed 97, dropped 0 / rule does not run | `22d818c72c9f` | `6f99ff4d9ab4` | `634de3e` |
+| 2 | `DA-D3-005` | same, 13 of 13 | unchanged | 2299 passed | ran on 500, fixed 7, dropped 1 / ran on 490, fixed 3, dropped 0 | `6f99ff4d9ab4` | `8cc7458cf3bd` | `7d8001f` |
 
-The baseline is `clean.py` `22d818c72c9f` (commit `cc6f4c8`); fix 2 starts from fix 1 (commit `c4f54c7`). Pytest counts are the whole suite at that commit (1 test skipped, 42 subtests passed). The output sha256 of each pack is the same as in [speed_v1.md section 6](speed_v1.md#6-output-sha256-of-the-13-sample-packs-identical-before-and-after-every-fix) (`math-finemath` `4e79a08fd226f614`, `math-megamath` `51c5b8452f45d195`), so before and after are byte-identical there too. Fix 1 does not run on `math-megamath`, so its megamath figures show only that nothing else moved.
+The baseline is `clean.py` `22d818c72c9f` (commit `5516cf9`, the base of this branch; the same file as at `cc6f4c8`, where fix 1 was first measured); fix 2 starts from fix 1 (commit `634de3e`). Pytest counts are the whole suite at that commit (1 test skipped, 42 subtests passed). The output sha256 of each pack is the same as in [speed_v1.md section 6](speed_v1.md#6-output-sha256-of-the-13-sample-packs-identical-before-and-after-every-fix) (`math-finemath` `4e79a08fd226f614`, `math-megamath` `51c5b8452f45d195`), so before and after are byte-identical there too. Fix 1 does not run on `math-megamath`, so its megamath figures show only that nothing else moved.
 
 ## 4. What each fix did
 
@@ -58,7 +58,7 @@ After fix 2, on math-finemath: the shared `f1_rule.py` is the slowest at 26.1% o
 ## 6. Method
 
 - **Machine:** x86_64, Python 3.12.15, one run at a time pinned to CPU 0 (`taskset -c 0`). Timings vary by about 5%, so treat ratios under 1.1x as about equal.
-- **Versions compared:** fix 1: `clean.py` at `cc6f4c8` against the rebuilt working copy; fix 2: `clean.py` at `c4f54c7` (fix 1) against the rebuilt working copy. Only `clean.py` differs between the two trees.
+- **Versions compared:** fix 1: the baseline `clean.py` `22d818c72c9f` (measured at `cc6f4c8`; `5516cf9` has the same file) against the rebuilt working copy; fix 2: `clean.py` `6f99ff4d9ab4` (fix 1, `634de3e`) against the rebuilt working copy. Only `clean.py` differs between the two trees.
 - **Packs:** the 13 original diagnosis packs (500 documents each), in a folder of exactly those 13, as `speed_compare.sh` expects.
 - **Tools and command**, from the repository root:
 
