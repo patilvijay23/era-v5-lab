@@ -3,7 +3,8 @@
 How the cleaned packs become token shards for training. Agreed with G3 (tokenizer, answers below); open with G7
 (infrastructure). The manifest template is `shard_manifest_v1.template.json`. `shard_writer.py` writes one shard from one
 part of the pipeline's final folder (clean, dedup, then F2: `pipeline/README.md`) and checks it; `provenance.py` checks that
-part's chain back to the raw sample first; `tests/` tests both.
+part's chain back to the raw sample first; `run_shards.py` runs the writer on every part of a final folder, with each pack's
+language, script, domain and lane from `pack_table.json`; `tests/` tests all of them.
 
 **Sample:** `sample/` holds `code-go-train-000000` (271 docs, 262,032 tokens), written with the C3 tokenizer from the CAP-1
 tokenizer sample, with every file below except the `.bin` and `.docs.parquet`, which pr-guard refuses in a PR.
@@ -94,6 +95,22 @@ What the writer records from it:
 **Held-out parts are not sharded yet.** The pipeline keeps `heldout/` apart (dedup never removes from it), and this format
 has `train` and `validation` only. Whether a held-out part becomes `validation` is for G3 and G9 to say; the writer refuses it until then.
 
+## Sharding a whole run
+
+`run_shards.py --input <run>/final --manifest <run>/pipeline_manifest.json --tokenizer <tokenizer.json> --out <dir>` hands every
+`<split>/<pack>/<part>.parquet` of the final folder to the writer (it names no split: the writer refuses what it does not shard).
+
+- **Pack metadata:** `pack_table.json` has a `language`, `script`, `domain` and `lane` for each of the 38 week-2 packs. A pack
+  that is not in it, or has a null field, is skipped, not guessed: a manifest never changes. `language` is the programming
+  language for `code-*` packs and the pack's `lang_label` otherwise; `lane` is null for every non-code pack until the training plan names the lanes.
+- **Shard id:** `<pack>-<split>-<part number>`, so `part-00001.parquet` is `<pack>-train-000001`. The files are written flat in `--out`.
+- **Safety:** if any shard it would write is already in `--out`, nothing is written. A part that fails is recorded and the run
+  goes on; the exit code is 1 unless every part was written.
+- **`shards_summary.json`:** per part, `status` (written, failed, skipped), `shard_id`, docs, tokens, `rows_read` of
+  `rows_in_part`, `truncated` and the docs left out. A part is truncated when its rows did not all fit in `--tokens`:
+  the writer makes one shard per part and drops the rest. A second run into the same `--out` (with `--pack`) adds to the
+  summary; one made for another pipeline run is refused.
+
 ## Manifest fields
 
 | Field | Meaning |
@@ -161,8 +178,8 @@ corpus-v1/
 
 ## Not done yet
 
-- A runner that shards every train part of a final folder (pack metadata table: language, script, lane).
+- Several shards per part: `run_shards.py` flags a part that does not fit in one shard (`truncated`) but does not split it.
+- Names for the `capability_lane` values (null in `pack_table.json` for the 32 non-code packs).
 - What a held-out part becomes (G3, G9).
-- Several shards per part, and the release's `SHA256SUMS` and `admission.jsonl`.
+- The release's `SHA256SUMS` and `admission.jsonl`, and the release folder layout (`<pack>/<split>/`; shards are written flat for now).
 - The loader and its run of `ckpt/loader_contract.py`.
-- The `capability_lane` values: from the training plan.

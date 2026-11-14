@@ -310,6 +310,21 @@ python -I teams/01-data-a/shards/shard_writer.py --input <run>/final/train/<pack
 | `--index`, `--tokens` | shard number (default 0) and token limit (default 2^26) |
 | `--out` | output folder |
 
+`shards/run_shards.py` runs the writer on every part of a run's `final/` folder:
+
+```bash
+python -I teams/01-data-a/shards/run_shards.py --input <run>/final --manifest <run>/pipeline_manifest.json \
+    --tokenizer <tokenizer.json> --out <dir> [--pack <pack> ...] [--tokens <n>]
+```
+
+| Argument | Meaning |
+|---|---|
+| `--input` | the run's `final/` folder: `<split>/<pack>/<part>.parquet`. Every part found goes to the writer, which refuses what it does not shard |
+| `--manifest`, `--tokenizer`, `--out`, `--tokens` | as for the writer |
+| `--pack` | only this pack (repeatable) |
+
+Language, script, domain and lane come from the pack's row in `shards/pack_table.json`; a pack that is not in the table, or has a null field, is skipped. The shard number is the part's number (`part-00001.parquet` becomes `<pack>-train-000001`). Nothing is written if one of the shards is already in `--out`. A part the writer stops on is recorded and the run goes on; the exit code is 1 unless every part was written. `<out>/shards_summary.json` lists each part with its status, shard id, docs, tokens, rows read of the rows in the part, and `truncated` (the writer fills one shard per part up to `--tokens` and drops the rest).
+
 <br>
 
 ## Data handling
