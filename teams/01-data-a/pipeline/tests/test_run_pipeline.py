@@ -326,7 +326,7 @@ def shard_config(tmp_path, tsai_outputs, config, monkeypatch):
 def test_shards_run_after_f2_and_are_recorded(tmp_path, shard_config):
     m = rp.run(shard_config)
     run = tmp_path / "runs" / "test-run"
-    assert [s["stage"] for s in m["stages"]] == list(rp.STAGES)
+    assert [s["stage"] for s in m["stages"]] == list(rp.STAGES[: rp.STAGES.index("shards") + 1])
     s = m["stages"][-1]
     assert s["counts"] == {"written": 2, "failed": 0, "skipped": 0, "not_sharded": 1, "truncated": 0, "parts": 3}
     assert m["totals"]["shards_written"] == 2 and all(ch["ok"] for ch in m["checks"])
@@ -350,7 +350,7 @@ def test_without_stages_shards_the_run_stops_after_the_ledger(tmp_path, config):
 def test_from_shards_adds_the_stage_to_a_finished_run(tmp_path, shard_config):
     rp.run(shard_config, to="ledger")
     m = rp.run(shard_config, start="shards")
-    assert [s["stage"] for s in m["stages"]] == list(rp.STAGES) and m["totals"]["final"] == 9 and m["totals"]["shards_written"] == 2
+    assert [s["stage"] for s in m["stages"]] == list(rp.STAGES[: rp.STAGES.index("shards") + 1]) and m["totals"]["final"] == 9 and m["totals"]["shards_written"] == 2
 
 
 def test_a_second_shard_run_into_the_same_out_stops(shard_config):
@@ -759,3 +759,71 @@ def test_from_ledger_keeps_the_per_pack_table(config):
     first = rp.run(config)
     assert rp.run(config, start="ledger")["by_pack"] == first["by_pack"]
     assert rp.run(config, to="f2").get("by_pack") is None
+
+
+# --- f2_pool.py as the F2 stage, and the reconcile stage ------------------------------------------------------------
+FAKE_F2_MODULE = Path(__file__).resolve().parent / "fake_f2_module.py"
+
+
+def test_f2_pool_gives_the_same_run_as_run_f2(tmp_path, config, tsai_outputs):
+    one = rp.run(config)
+    cfg = write_config(tmp_path / "pool.json", tsai_outputs, run_id="pooled")
+    set_f2(cfg, script=str(FAKE_F2_MODULE), pool=True, workers=2)
+    m = rp.run(cfg)
+    f2 = next(s for s in m["stages"] if s["stage"] == "f2")
+    assert f2["pool"] is True and f2["units"] == 2 and f2["pool_code_sha256"] == rp.sha256(rp.path(rp.POOL))
+    assert m["totals"] == one["totals"] and m["by_pack"] == one["by_pack"] and all(ch["ok"] for ch in m["checks"])
+    assert final_ids(tmp_path / "runs" / "pooled") == final_ids(tmp_path / "runs" / "test-run")
+    assert "f2_pool.py" in rp.Run(cfg).plan()
+
+
+def test_f2_pool_must_be_true_or_false(config):
+    set_f2(config, pool="yes")
+    with pytest.raises(rp.Stop, match="pool must be true or false"):
+        rp.run(config)
+
+
+def test_reconcile_needs_shards(config):
+    cfg = json.loads(config.read_text(encoding="utf-8"))
+    cfg["stages"]["reconcile"] = {}
+    config.write_text(json.dumps(cfg), encoding="utf-8")
+    with pytest.raises(rp.Stop, match="reconcile needs stages.shards"):
+        rp.run(config)  # whatever "to" says
+
+
+def test_to_reconcile_needs_it_configured(shard_config):
+    with pytest.raises(rp.Stop, match="needs stages.reconcile"):
+        rp.run(shard_config, to="reconcile")
+
+
+def test_reconcile_runs_after_the_shards(tmp_path, shard_config, monkeypatch):
+    from test_reconcile_shards import write_shards
+
+    def fake_shards(self):  # shard files in the writer's format, made from this run's final parts
+        write_shards(self.dir, self.output("shards"), packs={"code-go"})
+        return {"mode": "run", "command": ["fake"], "code_sha256": None, "output": "shards",
+                "counts": {"written": 2, "failed": 0, "skipped": 0, "not_sharded": 1, "truncated": 0, "parts": 3}}
+    monkeypatch.setattr(rp.Run, "stage_shards", fake_shards)
+    cfg = json.loads(shard_config.read_text(encoding="utf-8"))
+    cfg["stages"]["reconcile"] = {}
+    shard_config.write_text(json.dumps(cfg), encoding="utf-8")
+    m = rp.run(shard_config)
+    rec = m["stages"][-1]
+    assert rec["stage"] == "reconcile" and [s["stage"] for s in m["stages"]] == list(rp.STAGES)
+    assert rec["counts"] == {"kept": 9, "in_shards": 6, "in_shard": 6, "not_selected": 2, "not_sharded": 1}
+    assert "reconcile: no document is in two shards" in {c["check"] for c in m["checks"]}
+
+
+def test_a_failed_reconciliation_stops_the_run(tmp_path, shard_config, monkeypatch):
+    from test_reconcile_shards import write_shards
+
+    def fake_shards(self):
+        write_shards(self.dir, self.output("shards"), packs={"code-go"}, rows_read={"train/code-go/part-00000.parquet": 2})
+        return {"mode": "run", "command": ["fake"], "code_sha256": None, "output": "shards",
+                "counts": {"written": 2, "failed": 0, "skipped": 0, "not_sharded": 1, "truncated": 1, "parts": 3}}
+    monkeypatch.setattr(rp.Run, "stage_shards", fake_shards)
+    cfg = json.loads(shard_config.read_text(encoding="utf-8"))
+    cfg["stages"]["reconcile"] = {}
+    shard_config.write_text(json.dumps(cfg), encoding="utf-8")
+    with pytest.raises(rp.Stop, match="reconcile: .*not_reached"):
+        rp.run(shard_config)

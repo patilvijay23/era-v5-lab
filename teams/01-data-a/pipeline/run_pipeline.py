@@ -92,15 +92,16 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[2]
 sys.path.insert(0, str(HERE))
 import stage_args  # noqa: E402  (how clean, overlap and dedup get their paths)
-STAGES = ("clean", "overlap", "dedup", "apply", "f2", "survivor_loss", "ledger", "shards")
-OPTIONAL = ("shards",)  # runs only when stages.shards is configured
+STAGES = ("clean", "overlap", "dedup", "apply", "f2", "survivor_loss", "ledger", "shards", "reconcile")
+OPTIONAL = ("shards", "reconcile")  # run only when configured (reconcile also needs shards)
 EXTERNAL = ("clean", "overlap", "dedup")
 NEEDED = {"overlap": ("overlap_summary.json", "overlap_matches.csv", "overlap_docs.parquet"),
           "dedup": ("remove_list.csv", "dedup_groups.csv", "dedup_summary.json")}
 DEFAULT_F2 = "teams/01-data-a/spec_v1/run_f2.py"
 DEFAULT_SHARDS = "teams/01-data-a/shards/run_shards.py"
+POOL = "teams/01-data-a/pipeline/f2_pool.py"
 SPLITS = ("train", "heldout")
-RESERVED = ("deduped", "final", "report", "ledger", "shards", "cfg", "logs")  # folders of the run that no stage output may take
+RESERVED = ("deduped", "final", "report", "ledger", "shards", "reconcile", "cfg", "logs")  # folders of the run that no stage output may take
 VOLATILE = {"seconds", "input", "path", "cleaned", "skipped"}  # JSON fields that differ between identical runs
 
 
@@ -214,7 +215,14 @@ class Run:
             return path(spec["output"]) if spec.get("output") else self.dir / stage  # default: inside the run folder
         if stage == "shards":
             return path(self.stages["shards"]["out"]) if self.stages.get("shards", {}).get("out") else self.dir / "shards"
-        return self.dir / {"apply": "deduped", "f2": "final", "survivor_loss": "report", "ledger": "ledger"}[stage]
+        return self.dir / {"apply": "deduped", "f2": "final", "survivor_loss": "report", "ledger": "ledger",
+                           "reconcile": "reconcile"}[stage]
+
+    def last_stage(self):
+        """Where a run stops without "to": reconcile when configured (with shards), else shards when configured, else the ledger."""
+        if "shards" in self.stages and "reconcile" in self.stages:
+            return "reconcile"
+        return "shards" if "shards" in self.stages else "ledger"
 
     def shown(self, p):
         """A path as the manifest and the plan show it: relative to the repository when inside it, else absolute."""
@@ -268,6 +276,12 @@ class Run:
         workers = self.stages.get("f2", {}).get("workers", 1)
         if not isinstance(workers, int) or isinstance(workers, bool) or workers < 1:
             raise Stop(f"config: stages.f2.workers is {workers!r}, expected a whole number >= 1")
+        if not isinstance(self.stages.get("f2", {}).get("pool", False), bool):
+            raise Stop("config: stages.f2.pool must be true or false")
+        if "reconcile" in self.stages and "shards" not in self.stages:
+            raise Stop("config: stages.reconcile needs stages.shards: it reconciles the shards with the ledger")
+        if upto == "reconcile" and "reconcile" not in self.stages:
+            raise Stop("config: \"to\": \"reconcile\" needs stages.reconcile (it runs only when configured)")
         if STAGES.index(upto) >= STAGES.index("f2"):
             script = self.stages.get("f2", {}).get("script", DEFAULT_F2)
             if not path(script).is_file():
@@ -311,7 +325,7 @@ class Run:
     def plan(self, to=None):
         """What a run would do, as text: each stage's mode, output folder and command, with every path resolved. The config is
         checked first, as for a run; nothing is run or written."""
-        to = to or self.cfg.get("to") or (STAGES[-1] if "shards" in self.stages else "ledger")
+        to = to or self.cfg.get("to") or self.last_stage()
         if to not in STAGES:
             raise Stop(f"unknown stage {to!r}; stages are {', '.join(STAGES)}")
         self.validate(to)
@@ -333,7 +347,9 @@ class Run:
                         if k in stage_args.PATH_KEYS))
             elif stage == "f2":
                 f2 = self.stages.get("f2", {})
-                lines.append(f"{n:02d} {stage:13} run    {out}   {f2.get('script', DEFAULT_F2)}, workers {f2.get('workers', 1)}")
+                how = (f"{POOL} (the set loaded once) calling {f2.get('script', DEFAULT_F2)}" if f2.get("pool")
+                       else f2.get("script", DEFAULT_F2))
+                lines.append(f"{n:02d} {stage:13} run    {out}   {how}, workers {f2.get('workers', 1)}")
             elif stage == "shards":
                 spec = self.stages["shards"]
                 lines.append(f"{n:02d} {stage:13} run    {out}   {spec.get('script', DEFAULT_SHARDS)}, tokenizer {spec['tokenizer']}")
@@ -437,11 +453,12 @@ class Run:
         return {"mode": "run", "command": ["teams/01-data-a/pipeline/apply_dedup.py"],
                 "code_sha256": s["code_sha256"], "output": "deduped", "counts": counts}
 
-    def f2_units(self, src, split, workers):
-        """The F2 work units of one split: the whole split with one worker, else one unit per pack folder (plus one
-        for Parquet files sitting directly in the split folder). Each unit: (name, inputs, out)."""
+    def f2_units(self, src, split, workers, pool=False):
+        """The F2 work units of one split: the whole split with one worker or with the pool (f2_pool.py shares the parts
+        out itself), else one unit per pack folder (plus one for Parquet files sitting directly in the split folder).
+        Each unit: (name, inputs, out)."""
         out = self.output("f2") / split
-        if workers <= 1:
+        if workers <= 1 or pool:
             return [(split, [src / split], out)]
         units = [(f"{split}/{d.name}", [d], out / d.name) for d in sorted((src / split).iterdir())
                  if d.is_dir() and any(d.rglob("*.parquet"))]
@@ -453,7 +470,7 @@ class Run:
     def stage_f2(self):
         from concurrent.futures import ThreadPoolExecutor
         spec = self.stages.get("f2", {})
-        script, workers = spec.get("script", DEFAULT_F2), int(spec.get("workers", 1))
+        script, workers, pool = spec.get("script", DEFAULT_F2), int(spec.get("workers", 1)), bool(spec.get("pool", False))
         src, out = self.output("apply"), self.output("f2")
         parts = getattr(self, "apply_parts", None)
         if parts is None:  # apply was recorded by an earlier run
@@ -468,17 +485,20 @@ class Run:
                                if f.relative_to(out / split).as_posix() not in mine)
                 self.check(f"no stale F2 output in final/{split}", not stale,
                            f"{len(stale)} Parquet file(s) from an earlier run, e.g. {stale[0] if stale else ''}")
-        units = [u for sp in splits for u in self.f2_units(src, sp, workers)]
+        units = [u for sp in splits for u in self.f2_units(src, sp, workers, pool)]
 
         def one(unit):
             name, inputs, dst = unit
             log = self.dir / "logs" / ("f2_" + name.replace("/", "_").replace("(", "").replace(")", "") + ".log")
-            rc = run_script(script, ["--inputs", *inputs, "--out", dst], "f2", log)
+            if pool:  # one f2_pool.py per split: the set loaded once, the split's parts shared out among the workers
+                rc = run_script(POOL, ["--inputs", *inputs, "--out", dst, "--workers", workers, "--script", path(script)], "f2", log)
+            else:
+                rc = run_script(script, ["--inputs", *inputs, "--out", dst], "f2", log)
             return name, dst, rc, log
 
         t0 = time.time()
-        with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:  # each thread waits on its own run_f2 process
-            results = list(pool.map(one, units))
+        with ThreadPoolExecutor(max_workers=1 if pool else max(1, workers)) as threads:  # each thread waits on its own process
+            results = list(threads.map(one, units))
         failed = [(n, rc, log) for n, dst, rc, log in results if rc != 0 and not (dst / "f2_summary.json").is_file()]
         if failed:
             n, rc, log = failed[0]
@@ -514,6 +534,7 @@ class Run:
         self.check("F2 counts add up", totals["kept"] + totals["dropped_by_f2"] + totals["errors"] == totals["rows"], f"{totals}")
         return {"mode": "run", "command": [script, "--inputs", "<run>/deduped/<split>[/<pack>]", "--out", "<run>/final/<split>[/<pack>]"],
                 "code_sha256": sha256(path(script)), "output": "final", "set_sha256": sets.pop(),
+                "pool": pool, "pool_code_sha256": sha256(path(POOL)) if pool else None,
                 "workers": workers, "units": len(units), "wall_seconds": round(time.time() - t0, 1),
                 "counts": {**totals, "by_split": by_split}}
 
@@ -615,10 +636,23 @@ class Run:
                 "code_sha256": sha256(path(script)), "output": spec.get("out") or "shards", "cleaning_pipeline_sha256": record_sha,
                 "counts": {**counts, "parts": len(s["parts"])}}
 
+    def stage_reconcile(self):
+        """reconcile_shards.py: every kept document of the ledger is in exactly one shard, or left out for a stated reason."""
+        import reconcile_shards
+        out, packs = self.output("reconcile"), self.stages.get("shards", {}).get("packs") or None
+        try:  # on a failed check, reconcile_shards.py has written its summary and per-document statuses before stopping
+            r = reconcile_shards.reconcile(self.output("ledger"), self.output("shards"), out, packs)
+        except reconcile_shards.Stop as e:
+            raise Stop(f"reconcile: {e}. See {self.shown(out)}/reconcile_summary.json and reconcile_docs.parquet (shard_status)")
+        for c in r["checks"]:
+            self.check(f"reconcile: {c['check']}", c["ok"], c["detail"])
+        return {"mode": "run", "command": ["teams/01-data-a/pipeline/reconcile_shards.py"], "code_sha256": r["code_sha256"],
+                "output": "reconcile", "counts": {"kept": r["kept"], "in_shards": r["in_shards"], **r["totals"]}}
+
     # --- the run ----------------------------------------------------------------------------------------------------
     def execute(self, start=None, to=None):
         start = start or self.cfg.get("from") or STAGES[0]
-        to = to or self.cfg.get("to") or (STAGES[-1] if "shards" in self.stages else "ledger")
+        to = to or self.cfg.get("to") or self.last_stage()
         for s in (start, to):
             if s not in STAGES:
                 raise Stop(f"unknown stage {s!r}; stages are {', '.join(STAGES)}")
