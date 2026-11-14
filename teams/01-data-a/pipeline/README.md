@@ -228,6 +228,7 @@ The manifest's `totals` carry the headline: `cleaned → removed_by_dedup → dr
 | The whole config before the first stage | runner | `config: stages.dedup.output is missing` · `f2 script … not found` |
 | A run stage's settings file exists and matches its pin; its output is below `out/`, not a folder of the run, not another stage's | runner (config) | `config: overlap: … pins …` · `… named subfolder …` · `… is a folder of the run itself` · `stages.clean.output and stages.overlap.output overlap` |
 | Shards: no part failed or was skipped, `run_shards.py` exited 0, at least one shard written, the summary is this run's | runner | `shards: no part failed or was skipped` · `shards: the summary is this run's, made with this run's cleaning_pipeline.json` |
+| Shards on disk: files and sha256, `.bin` header and size, index, special ids, metadata, pack table row, tokenizer, F2 set, first and last document of every shard against `final/` (checked by `run_shards.py` and again by the runner, not from the summary) | runner | `shards: the shard files on disk verify …` · `verify_shards: … sha256 …` |
 
 </details>
 
@@ -532,6 +533,8 @@ python -I teams/01-data-a/shards/run_shards.py --input <run>/final --manifest <r
 | `--input` | the run's `final/` folder: `<split>/<pack>/<part>.parquet`. Every part found goes to the writer, except those in a `heldout`, `validation` or `val` folder (reported as `not_sharded`, not an error: held-out data is not sharded yet) |
 | `--manifest`, `--tokenizer`, `--out`, `--tokens` | as for the writer |
 | `--pack` | only this pack (repeatable) |
+
+When the parts are done, `run_shards.py` checks the shards in `--out` against their files (`shards/verify_shards.py`; `shards/shard_format_v1.md`, "Verification"), and the runner's shard stage checks them again on its own, not from `shards_summary.json`: the five files and `cleaning_pipeline.json` exist with the manifest's sha256, the `.bin` header and size, the index, the special ids and the metadata agree with the manifest, `language`, `script`, `domain` and `lane` are the pack's row in `pack_table.json`, and the first and last document of each shard, read from `final/`, encode to the tokens in the `.bin` and decode to their normalized text. The hashes the runner computes for this are reused for the stage's digest, so each `.bin` is read once there. By hand: `python -I teams/01-data-a/shards/verify_shards.py --out <dir> --manifest <run>/pipeline_manifest.json --tokenizer <tokenizer.json>`.
 
 Language, script, domain and lane come from the pack's row in `shards/pack_table.json`; a pack that is not in the table, or has a null field, is skipped. The shard number is the part's number (`part-00001.parquet` becomes `<pack>-train-000001`). Nothing is written if one of the shards is already in `--out`. A part the writer stops on is recorded and the run goes on; the exit code is 1 unless every part was written or `not_sharded`. `<out>/shards_summary.json` lists each part with its status, shard id, docs, tokens, rows read of the rows in the part, and `truncated` (the writer fills one shard per part up to `--tokens` and drops the rest).
 
