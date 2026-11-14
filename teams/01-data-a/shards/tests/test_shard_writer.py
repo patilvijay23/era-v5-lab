@@ -128,7 +128,9 @@ def test_the_manifest_records_the_pipeline_run(tmp_path, monkeypatch):
     assert q["input_part"] == f"train/{part}" and q["raw_input_sha256"] == raw_sha("train", part)
     cp = json.loads((out / "cleaning_pipeline.json").read_text(encoding="utf-8"))
     assert cp["clean_py_sha256"] == CLEAN_SHA and cp["f2_set_sha256"] == m["decontam_set_sha256"]
-    assert cp["dedup"] == {"remove_list_sha256": sha(tmp_path / "pipeline" / "dedup" / "remove_list.csv"), "remove_list_rows": 1}
+    assert cp["dedup"]["remove_list_sha256"] == sha(tmp_path / "pipeline" / "dedup" / "remove_list.csv") and cp["dedup"]["remove_list_rows"] == 1
+    assert sorted(cp["dedup"]) == ["code_sha256", "overlap", "remove_list_rows", "remove_list_sha256", "settings"]
+    assert cp["dedup"]["settings"]["pack_order"] == ["code-go", "en-dclm"] and cp["dedup"]["overlap"]["k"] == 5
     assert sorted(cp) == ["clean_py_sha256", "dedup", "f2_set_sha256"]  # the processing only: no link to the run log
     assert q["run_id"] == "test-run"
     assert m["cleaning_pipeline_sha256"] == sha(out / "cleaning_pipeline.json")

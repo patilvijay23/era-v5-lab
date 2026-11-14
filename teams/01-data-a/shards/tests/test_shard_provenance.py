@@ -189,12 +189,45 @@ def f2_set(run):
     return next(s for s in json.loads((run / "pipeline_manifest.json").read_text(encoding="utf-8"))["stages"] if s["stage"] == "f2")["set_sha256"]
 
 
-def test_the_processing_record_names_clean_f2_and_the_remove_list(run):
+def test_the_processing_record_names_clean_f2_and_the_dedup_run(run):
     m = run / "pipeline_manifest.json"
+    root = run.parent.parent
     record = provenance.processing_record(m)
-    assert record == {"clean_py_sha256": CLEAN_SHA, "f2_set_sha256": f2_set(run),
-                      "dedup": {"remove_list_sha256": sha(run.parent.parent / "dedup" / "remove_list.csv"), "remove_list_rows": 2}}
+    assert record == {"clean_py_sha256": CLEAN_SHA, "f2_set_sha256": f2_set(run), "dedup": {
+        "remove_list_sha256": sha(root / "dedup" / "remove_list.csv"), "remove_list_rows": 2,
+        "overlap": {"matches_sha256": sha(root / "overlap" / "overlap_matches.csv"), "docs_sha256": sha(root / "overlap" / "overlap_docs.parquet"),
+                    "k": 5, "floor": 0.5, "code_sha256": None},
+        "settings": {"cross_pack": True, "pack_order": ["code-go", "en-dclm"], "licence_usable": {}, "default_licence_usable": True},
+        "code_sha256": None}}
+    assert "gold_dirs" not in json.dumps(record) and "made up" not in json.dumps(record)  # no paths
     assert load(run, "train", "code-go/part-00001.parquet")["record"] == record
+
+
+def test_the_code_sha256_of_overlap_and_dedup_come_from_the_manifest_when_they_ran(run):
+    m = run / "pipeline_manifest.json"
+    data = json.loads(m.read_text(encoding="utf-8"))
+    for s in data["stages"]:
+        if s["stage"] in ("overlap", "dedup"):
+            s["code_sha256"] = ("o" if s["stage"] == "overlap" else "d") * 64
+    m.write_text(json.dumps(data), encoding="utf-8")
+    record = provenance.processing_record(m)
+    assert record["dedup"]["code_sha256"] == "d" * 64 and record["dedup"]["overlap"]["code_sha256"] == "o" * 64
+
+
+@pytest.mark.parametrize("where, change, message", [
+    ("dedup", lambda d: d.pop("config"), "dedup_summary.json config has no cross_pack, pack_order"),
+    ("dedup", lambda d: d["config"].pop("pack_order"), "has no pack_order"),
+    ("dedup", lambda d: d["overlap_run"].pop("checked_sha256"), "checked_sha256 has no overlap_matches.csv"),
+    ("overlap", lambda d: d.pop("config"), "overlap_summary.json config has no k, floor"),
+    ("overlap", lambda d: d["config"].pop("floor"), "has no floor"),
+])
+def test_no_record_when_a_summary_lacks_what_the_shard_records(run, where, change, message):
+    f = run.parent.parent / where / f"{where}_summary.json"
+    data = json.loads(f.read_text(encoding="utf-8"))
+    change(data)
+    f.write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(provenance.Stop, match=message):
+        provenance.processing_record(run / "pipeline_manifest.json")
 
 
 def test_write_record_writes_the_file_next_to_the_manifest(run):

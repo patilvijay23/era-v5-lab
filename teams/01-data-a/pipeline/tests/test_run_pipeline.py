@@ -40,7 +40,7 @@ def overlap_folder(folder, cleaned_parts=PARTS, docs_all=13):
     folder.mkdir(parents=True, exist_ok=True)
     (folder / "overlap_matches.csv").write_text("row_a,row_b\n0,1\n", encoding="utf-8")
     (folder / "overlap_docs.parquet").write_bytes(b"stand-in for overlap_docs.parquet")
-    summary = {"status": "complete", "documents_all": docs_all,
+    summary = {"status": "complete", "documents_all": docs_all, "config": {"k": 5, "floor": 0.5, "inputs": "made up"},
                "inputs": {"parts": [{"part": f"{s}/{p}", "documents": len(rows)} for (s, p), rows in cleaned_parts.items()]},
                "outputs": {n: {"sha256": sha(folder / n)} for n in ("overlap_matches.csv", "overlap_docs.parquet")}}
     (folder / "overlap_summary.json").write_text(json.dumps(summary), encoding="utf-8")
@@ -60,7 +60,9 @@ def dedup_folder(folder, overlap, removed=2, heldout_removed=0):
     checked = {n: sha(overlap / n) for n in ("overlap_matches.csv", "overlap_docs.parquet")}
     (folder / "dedup_summary.json").write_text(json.dumps({
         "status": "complete", "overlap_run": {"documents_all": 13, "checked_sha256": checked}, "documents_all": 13,
-        "removed": removed, "heldout_removed": heldout_removed}), encoding="utf-8")
+        "removed": removed, "heldout_removed": heldout_removed,
+        "config": {"cross_pack": True, "pack_order": ["code-go", "en-dclm"], "licence_usable": {}, "default_licence_usable": True,
+                   "gold_dirs": []}}), encoding="utf-8")
     return folder
 
 

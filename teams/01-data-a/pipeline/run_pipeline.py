@@ -16,7 +16,7 @@ STAGES
                  (one process per split; with "workers": N, up to N processes at once, one per pack folder)
   survivor_loss  survivor_loss.py on dedup_groups.csv and F2's reports        -> <run>/report
   shards         optional, only with stages.shards: writes <run>/cleaning_pipeline.json (clean.py sha256, F2 set, dedup remove
-                 list: the processing behind the shards), then shards/run_shards.py on <run>/final   -> <run>/shards (or "out")
+                 list, overlap run and dedup settings: the processing behind the shards), then shards/run_shards.py on <run>/final   -> <run>/shards (or "out")
                  It runs after the manifest holds every earlier stage, which is what the shard writer reads; its own record is
                  added to the manifest afterwards. The stage stops the run if a part failed or was skipped, if no shard was
                  written, or if the summary is not this run's. --from shards runs only this stage, into an out folder without shards.

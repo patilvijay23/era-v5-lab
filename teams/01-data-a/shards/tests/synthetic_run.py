@@ -74,7 +74,9 @@ def make_run(folder, monkeypatch, parts, removed=(), f2_drop=(), shards=None):
     checked = {n: sha(overlap / n) for n in ("overlap_matches.csv", "overlap_docs.parquet")}
     (dedup / "dedup_summary.json").write_text(json.dumps({
         "status": "complete", "overlap_run": {"documents_all": total, "checked_sha256": checked}, "documents_all": total,
-        "removed": len(removals), "heldout_removed": 0}), encoding="utf-8")
+        "removed": len(removals), "heldout_removed": 0,
+        "config": {"cross_pack": True, "pack_order": ["code-go", "en-dclm"], "licence_usable": {}, "default_licence_usable": True,
+                   "gold_dirs": []}}), encoding="utf-8")
     config = write_config(folder / "pipeline.json", {"cleaned": cleaned, "overlap": overlap, "dedup": dedup},
                           **({"shards": shards} if shards else {}))
     rp.run(config)

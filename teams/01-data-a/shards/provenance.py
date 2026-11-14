@@ -30,7 +30,7 @@ Returns a dict of IDs, counts and hashes (never text):
   f2          {set_sha256, run_f2_py_sha256, dropped: [{doc_id, items, offset}]}   items are benchmark item IDs
   counts      {cleaned, removed_by_dedup, dropped_by_f2, final}
   pipeline    {manifest_sha256, run_id, git_commit}
-  record      {clean_py_sha256, f2_set_sha256, dedup: {remove_list_sha256, remove_list_rows}}   = processing_record()
+  record      {clean_py_sha256, f2_set_sha256, dedup: {...}}   = processing_record(): see there
 
 processing_record(manifest) is what <run>/cleaning_pipeline.json says: the processing behind every shard of the run (no
 link to the manifest, which is rewritten after every stage). run_pipeline.py's shard stage writes that file with
@@ -45,7 +45,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[3]  # teams/01-data-a/shards/provenance.py -> the repository root
 SPLITS = ("train", "heldout")
-NEEDED_STAGES = ("clean", "dedup", "apply", "f2")
+NEEDED_STAGES = ("clean", "overlap", "dedup", "apply", "f2")
 
 
 class Stop(Exception):
@@ -127,8 +127,14 @@ def stage_output(m, stage, repo):
 
 
 def processing_record(manifest, repo=REPO):
-    """What the run's processing was, for cleaning_pipeline.json: {clean_py_sha256, f2_set_sha256, dedup: {remove_list_sha256,
-    remove_list_rows}}. Read from the manifest, the clean job's job_summary.json, apply's summary and remove_list.csv as it is now."""
+    """What the run's processing was, for cleaning_pipeline.json:
+      {clean_py_sha256, f2_set_sha256,
+       dedup: {remove_list_sha256, remove_list_rows,
+               overlap: {matches_sha256, docs_sha256, k, floor, code_sha256},         the overlap run dedup used
+               settings: {cross_pack, pack_order, licence_usable, default_licence_usable},
+               code_sha256}}                                                         null while a stage was adopted
+    Read from the manifest, the clean job's job_summary.json, apply's summary, remove_list.csv as it is now, and the config
+    blocks of overlap's and dedup's summaries (paths, timings and gold_dirs are left out: they do not change what is removed)."""
     manifest = Path(manifest)
     m, stages = read_manifest(manifest)
     run = manifest.resolve().parent
@@ -149,8 +155,22 @@ def processing_record(manifest, repo=REPO):
     if rl_sha != summary.get("remove_list", {}).get("sha256"):
         raise Stop(f"{remove_list} changed after apply used it (sha256 {rl_sha[:12]}…, apply recorded "
                    f"{str(summary.get('remove_list', {}).get('sha256'))[:12]}…)")
+    overlap_sum = read_json(stage_output(m, "overlap", repo) / "overlap_summary.json", "overlap's summary")
+    dedup_sum = read_json(stage_output(m, "dedup", repo) / "dedup_summary.json", "dedup's summary")
+    o_cfg, d_cfg = overlap_sum.get("config"), dedup_sum.get("config")
+    checked = (dedup_sum.get("overlap_run") or {}).get("checked_sha256") or {}
+    for what, have, keys in (("overlap_summary.json config", o_cfg, ("k", "floor")),
+                             ("dedup_summary.json config", d_cfg, ("cross_pack", "pack_order", "licence_usable", "default_licence_usable")),
+                             ("dedup_summary.json overlap_run.checked_sha256", checked, ("overlap_matches.csv", "overlap_docs.parquet"))):
+        lacking = [k for k in keys if not isinstance(have, dict) or k not in have]
+        if lacking:
+            raise Stop(f"{what} has no {', '.join(lacking)}: the shard records the settings dedup ran with")
     return {"clean_py_sha256": clean_sha, "f2_set_sha256": f2_set,
-            "dedup": {"remove_list_sha256": rl_sha, "remove_list_rows": summary["remove_list"]["rows"]}}
+            "dedup": {"remove_list_sha256": rl_sha, "remove_list_rows": summary["remove_list"]["rows"],
+                      "overlap": {"matches_sha256": checked["overlap_matches.csv"], "docs_sha256": checked["overlap_docs.parquet"],
+                                  "k": o_cfg["k"], "floor": o_cfg["floor"], "code_sha256": stages["overlap"].get("code_sha256")},
+                      "settings": {k: d_cfg[k] for k in ("cross_pack", "pack_order", "licence_usable", "default_licence_usable")},
+                      "code_sha256": stages["dedup"].get("code_sha256")}}
 
 
 def write_record(manifest, repo=REPO):
