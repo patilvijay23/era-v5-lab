@@ -50,6 +50,9 @@
     "apply": {
       "link": true,
       "_link": "hard-link untouched parts instead of copying them (same file system)"
+    },
+    "ledger": {
+      "_raw": "optional: the raw parts the cleaner read (<raw>/<split>/<pack>/part-*.parquet). Set \"raw\" for mode B (keep / fix / drop per document); without it the ledger is mode C (clean_action unknown)"
     }
   }
 }
