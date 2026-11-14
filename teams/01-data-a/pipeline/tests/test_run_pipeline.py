@@ -1,5 +1,5 @@
 """Tests for run_pipeline.py: the whole chain on synthetic data, with clean, overlap and dedup adopted (as when TSAI ran
-them) and apply, F2 (a stand-in, fake_run_f2.py) and survivor_loss run by the runner.
+them) and apply, F2 (a stand-in, fake_run_f2.py), survivor_loss and the ledger run by the runner.
 
   python -m pytest teams/01-data-a/pipeline/tests -q
 """
@@ -58,6 +58,15 @@ def dedup_folder(folder, overlap, removed=2, heldout_removed=0):
         ["G000002", 3, 0, "survivor", "code-go", "heldout", "code-go/part-00000.parquet", 0, "h0"],
         ["G000002", 3, 0, "survivor", "code-go", "heldout", "code-go/part-00000.parquet", 1, "h1"],
         ["G000002", 3, 0, "removed", "en-dclm", "train", "en-dclm/part-00000.parquet", 2, "e2"]])
+    log = [{"removed_pack_id": "code-go", "removed_split": "train", "removed_part": "code-go/part-00001.parquet",
+            "removed_row_in_part": 0, "removed_id": "g0", "kept_pack_id": "code-go", "kept_split": "train",
+            "kept_part": "code-go/part-00000.parquet", "kept_row_in_part": 0, "kept_id": "g0", "rule": "H1",
+            "similarity": 1.0, "priority_rule": 4, "stage": "within_pack", "direct": True},
+           {"removed_pack_id": "en-dclm", "removed_split": "train", "removed_part": "en-dclm/part-00000.parquet",
+            "removed_row_in_part": 2, "removed_id": "e2", "kept_pack_id": "code-go", "kept_split": "heldout",
+            "kept_part": "code-go/part-00000.parquet", "kept_row_in_part": 0, "kept_id": "h0", "rule": "H2",
+            "similarity": 0.91, "priority_rule": 0, "stage": "cross_pack", "direct": True}]
+    (folder / "dedup_log.jsonl").write_text("".join(json.dumps(e) + "\n" for e in log), encoding="utf-8")
     checked = {n: sha(overlap / n) for n in ("overlap_matches.csv", "overlap_docs.parquet")}
     (folder / "dedup_summary.json").write_text(json.dumps({
         "status": "complete", "overlap_run": {"documents_all": 13, "checked_sha256": checked}, "documents_all": 13,
@@ -107,9 +116,13 @@ def test_full_chain(tmp_path, config):
     assert c["f2"]["by_split"]["heldout"] == {"rows": 2, "kept": 1, "dropped_by_f2": 1, "errors": 0}
     assert c["survivor_loss"]["lost"] == 1 and c["survivor_loss"]["partly_hit"] == 1
     assert m["totals"] == {"cleaned": 13, "removed_by_dedup": 2, "dropped_by_f2": 2, "final": 9}
+    assert c["ledger"] == {"rows": 13, "rows_cleaned": 13, "kept": 9, "dropped_by_clean": 0, "removed_by_dedup": 2,
+                           "dropped_by_f2": 2, "f2_error": 0}
+    assert sorted(p.relative_to(run / "ledger").as_posix() for p in (run / "ledger").rglob("*.parquet")) == [
+        "heldout/code-go.parquet", "train/code-go.parquet", "train/en-dclm.parquet"]
     names = {ch["check"] for ch in m["checks"]}
     assert {"overlap read these cleaned parts", "dedup used this overlap run", "F2 read what apply wrote in train",
-            "survivor loss saw every dedup group"} <= names and all(ch["ok"] for ch in m["checks"])
+            "survivor loss saw every dedup group", "ledger kept = F2's kept"} <= names and all(ch["ok"] for ch in m["checks"])
     assert final_ids(run) == sorted(["g1", "g2", "g3", "g4", "g5", "g6", "e0", "e1", "h0"])
     assert (run / "logs" / "f2_train.log").is_file()
     on_disk = json.loads((run / "pipeline_manifest.json").read_text(encoding="utf-8"))
@@ -257,8 +270,9 @@ def test_parallel_f2_matches_one_process(tmp_path, config, tsai_outputs):
     assert par["totals"] == one["totals"] and final_ids(run) == final_ids(tmp_path / "runs" / "test-run")
     assert {p.name for p in (run / "logs").glob("f2_*.log")} == {"f2_train_code-go.log", "f2_train_en-dclm.log",
                                                                   "f2_heldout_code-go.log"}
-    loss = {s["stage"]: s["counts"] for s in par["stages"]}["survivor_loss"]
-    assert (loss["lost"], loss["partly_hit"]) == (1, 1)
+    c = {s["stage"]: s["counts"] for s in par["stages"]}
+    assert (c["survivor_loss"]["lost"], c["survivor_loss"]["partly_hit"]) == (1, 1)
+    assert c["ledger"] == {s["stage"]: s["counts"] for s in one["stages"]}["ledger"]
 
 
 def test_parallel_f2_crash_names_the_pack_and_rerun_recovers(config, monkeypatch):
@@ -314,16 +328,16 @@ def test_shards_run_after_f2_and_are_recorded(tmp_path, shard_config):
     assert (run / "logs" / "shards.log").is_file() and s["digest"] and s["code_sha256"]
 
 
-def test_without_stages_shards_the_run_stops_after_survivor_loss(tmp_path, config):
+def test_without_stages_shards_the_run_stops_after_the_ledger(tmp_path, config):
     m = rp.run(config)
-    assert [s["stage"] for s in m["stages"]][-1] == "survivor_loss" and "shards_written" not in m["totals"]
+    assert [s["stage"] for s in m["stages"]][-1] == "ledger" and "shards_written" not in m["totals"]
     assert not (tmp_path / "runs" / "test-run" / "cleaning_pipeline.json").exists()
     with pytest.raises(rp.Stop, match="stages.shards is not configured"):
         rp.run(config, to="shards")
 
 
 def test_from_shards_adds_the_stage_to_a_finished_run(tmp_path, shard_config):
-    rp.run(shard_config, to="survivor_loss")
+    rp.run(shard_config, to="ledger")
     m = rp.run(shard_config, start="shards")
     assert [s["stage"] for s in m["stages"]] == list(rp.STAGES) and m["totals"]["final"] == 9 and m["totals"]["shards_written"] == 2
 
@@ -339,7 +353,7 @@ def test_a_failed_part_stops_the_run_before_the_stage_is_recorded(tmp_path, shar
     with pytest.raises(rp.Stop, match="no part failed or was skipped"):
         rp.run(shard_config)
     stages = [s["stage"] for s in json.loads((tmp_path / "runs" / "test-run" / "pipeline_manifest.json").read_text(encoding="utf-8"))["stages"]]
-    assert stages[-1] == "survivor_loss"
+    assert stages[-1] == "ledger"
 
 
 def test_a_shard_process_that_wrote_no_summary_stops_the_run(shard_config, monkeypatch):
@@ -419,7 +433,7 @@ def test_stages_run_from_settings_into_the_run_folder(tmp_path, staged):
     assert (run / "clean" / "train").is_dir() and (run / "overlap" / "overlap_summary.json").is_file() and (run / "dedup" / "remove_list.csv").is_file()
     # every stage gets the settings with the path keys filled in, repo-relative; every other setting is kept
     cl = json.loads((run / "cfg" / "clean.json").read_text(encoding="utf-8"))
-    assert (cl["input_root"], cl["output_root"]) == ("raw/sample", "out/runs/test-run/clean") and recs["clean"]["command"][-2:] == ["--config", str(run / "cfg" / "clean.json")]
+    assert (cl["input_root"], cl["output_root"]) == ("raw/sample", "out/runs/test-run/clean") and recs["clean"]["command"][-2:] == ["--config", (run / "cfg" / "clean.json").as_posix()]
     assert (cl["manifest_sha256"], cl["expected_parts"], cl["sample"]) == (sha(cl["manifest"]), {"train": 9, "heldout": 2}, "made up")
     ov = json.loads((run / "cfg" / "overlap.json").read_text(encoding="utf-8"))
     dd = json.loads((run / "cfg" / "dedup.json").read_text(encoding="utf-8"))
@@ -616,7 +630,7 @@ def test_from_in_the_config_resumes_a_recorded_run(staged):
     cfg["from"] = "f2"
     path.write_text(json.dumps(cfg), encoding="utf-8")
     m = rp.run(path)
-    assert [s["stage"] for s in m["stages"]] == ["clean", "overlap", "dedup", "apply", "f2", "survivor_loss"] and m["totals"]["final"] == 9
+    assert [s["stage"] for s in m["stages"]] == ["clean", "overlap", "dedup", "apply", "f2", "survivor_loss", "ledger"] and m["totals"]["final"] == 9
 
 
 def test_from_must_not_come_after_to(staged):
@@ -650,3 +664,43 @@ def test_the_command_line_takes_only_config_and_plan(staged, capsys, monkeypatch
         with pytest.raises(SystemExit) as e:
             rp.main()
         assert e.value.code == 2  # argparse: unrecognized arguments
+
+
+def test_ledger_mode_b_adds_the_cleaners_drops(tmp_path, config, cleaned):
+    raw = tmp_path / "raw"
+    for f in cleaned.rglob("*.parquet"):
+        t = pq.read_table(f)
+        dst = raw / f.relative_to(cleaned)
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        extra = t.slice(0, 1).to_pylist()
+        extra[0]["doc_id"] = "x-" + extra[0]["doc_id"]
+        pq.write_table(pa_concat(t, extra), dst)
+    cfg = json.loads(config.read_text(encoding="utf-8"))
+    cfg["stages"]["ledger"] = {"raw": str(raw)}
+    config.write_text(json.dumps(cfg), encoding="utf-8")
+    m = rp.run(config)
+    assert m["totals"] == {"raw": 17, "dropped_by_clean": 4, "cleaned": 13, "removed_by_dedup": 2, "dropped_by_f2": 2,
+                           "final": 9}
+    rec = next(s for s in m["stages"] if s["stage"] == "ledger")
+    assert rec["clean_mode"] == "B" and rec["counts"]["clean_fix_by_text"] == 0
+
+
+def pa_concat(t, rows):
+    import pyarrow as pa
+    return pa.concat_tables([t, pa.Table.from_pylist(rows, schema=t.schema)])
+
+
+def test_ledger_raw_must_be_a_folder(tmp_path, config):
+    cfg = json.loads(config.read_text(encoding="utf-8"))
+    cfg["stages"]["ledger"] = {"raw": str(tmp_path / "no-such-raw")}
+    config.write_text(json.dumps(cfg), encoding="utf-8")
+    with pytest.raises(rp.Stop, match="stages.ledger.raw"):
+        rp.run(config)
+    assert not (tmp_path / "runs").exists()
+
+
+def test_from_ledger_reuses_earlier_stages(config):
+    first = rp.run(config)
+    again = rp.run(config, start="ledger")
+    assert again["totals"] == first["totals"]
+    assert [s["digest"] for s in again["stages"]] == [s["digest"] for s in first["stages"]]

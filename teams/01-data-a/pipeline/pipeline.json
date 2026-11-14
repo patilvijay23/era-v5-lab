@@ -2,7 +2,7 @@
   "_comment": "Generic run config for run_pipeline.py: nothing here is specific to one run. Paths are relative to the repository root. Everything that defines a run is a key in this file, and the command is only --config <file>: for a job, copy this file to jobs/<date>-<name>/run.json and edit the copy. run_id names the run and its folders (out/pipeline/<run_id>/). The clean stage also names the input set (input folder, manifest_sha256, expected_parts); a new input set means new values here. Each of clean, overlap and dedup runs from a settings file (settings only, no paths; the runner fills the paths into <run>/cfg/<stage>.json), or is adopted: {\"mode\": \"adopt\", \"output\": \"<folder TSAI returned>\"}. Optional keys: \"to\" (stop after this stage, only the stages up to it are checked), \"from\" (resume at this stage), stages.clean.only (a list of sample parts, for trials). 'run_pipeline.py --config <file> --plan' prints every folder and command and runs nothing.",
   "run_id": "sample-v0",
   "out": "out/pipeline",
-  "_to": "optional: clean, overlap, dedup, apply, f2, survivor_loss or shards",
+  "_to": "optional: clean, overlap, dedup, apply, f2, survivor_loss, ledger or shards",
   "_from": "optional: resume at this stage; the earlier stages must be recorded in the manifest",
   "stages": {
     "clean": {
@@ -37,12 +37,15 @@
       "link": true,
       "_link": "hard-link untouched parts instead of copying them (same file system)"
     },
+    "ledger": {
+      "_raw": "optional: the raw parts the cleaner read (<raw>/<split>/<pack>/part-*.parquet). Set \"raw\" for mode B (keep / fix / drop per document); without it the ledger is mode C (clean_action unknown)"
+    },
     "_shards_example": {
       "tokenizer": "<C3 tokenizer.json>",
       "packs": [
         "code-go"
       ],
-      "_note": "rename to 'shards' to add the shard stage after survivor loss; 'packs' limits it to packs with a lane in shards/pack_table.json"
+      "_note": "rename to 'shards' to add the shard stage after the ledger; 'packs' limits it to packs with a lane in shards/pack_table.json"
     }
   }
 }

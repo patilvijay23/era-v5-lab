@@ -127,7 +127,7 @@ def build(stage, spec, folders, cfg_dir, repo, write=True, only=()):
         if write:
             check_manifest(spec, repo)
     config = generated_config(stage, settings, folders, cfg_dir, repo, write, PARTIAL.get(stage) if only else None, spec)
-    command = [script, "--config", str(config)]
+    command = [script, "--config", config.as_posix()]  # / on every OS, like the "config" field
     if stage == "clean":
         for part in only:
             command += ["--only", part]

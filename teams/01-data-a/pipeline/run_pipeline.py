@@ -1,10 +1,11 @@
-"""One command for Data A's pipeline: clean -> overlap -> dedup -> apply the remove list -> F2 -> survivor loss -> shards.
+"""One command for Data A's pipeline: clean -> overlap -> dedup -> apply the remove list -> F2 -> survivor loss -> ledger -> shards.
 
   python -I teams/01-data-a/pipeline/run_pipeline.py --config teams/01-data-a/pipeline/pipeline.json [--plan]
 
 It runs or adopts each stage in order, checks that each stage follows from the one before (counts and sha256 links), and
 writes <out>/<run_id>/pipeline_manifest.json. It never reimplements a stage: clean (#244), overlap and dedup (#255) and F2
-(run_f2.py, #35) are the team's scripts, called as they are; apply_dedup.py and survivor_loss.py are in this folder.
+(run_f2.py, #35) are the team's scripts, called as they are; apply_dedup.py, survivor_loss.py and ledger.py are in this
+folder.
 
 STAGES
 ======
@@ -15,6 +16,7 @@ STAGES
   f2             run_f2.py on <run>/deduped/<split>                           -> <run>/final/<split>
                  (one process per split; with "workers": N, up to N processes at once, one per pack folder)
   survivor_loss  survivor_loss.py on dedup_groups.csv and F2's reports        -> <run>/report
+  ledger         ledger.py: one row per document with each stage's decision  -> <run>/ledger
   shards         optional, only with stages.shards: writes <run>/cleaning_pipeline.json (clean.py sha256, F2 set, dedup remove
                  list, overlap run and dedup settings: the processing behind the shards), then shards/run_shards.py on <run>/final   -> <run>/shards (or "out")
                  It runs after the manifest holds every earlier stage, which is what the shard writer reads; its own record is
@@ -40,14 +42,16 @@ RUN PARAMETERS (all in the config file; the manifest embeds the whole config)
   to                     stop after this stage; only the stages up to it are checked
   from                   resume at this stage: the earlier stages must be recorded in the manifest with unchanged digests
   stages.clean.only      run the clean job on these sample parts only (a list, for trials); overlap then expects no packs
-apply, f2 and survivor_loss always run. f2 takes "script" (default teams/01-data-a/spec_v1/run_f2.py) and "workers"
+apply, f2, survivor_loss and ledger always run. f2 takes "script" (default teams/01-data-a/spec_v1/run_f2.py) and "workers"
 (default 1; each run_f2.py process loads G9's full set, about 1.1 GB of memory, so N workers need about N × 1.1 GB plus the
 documents in flight). shards takes "tokenizer" (required: G3's C3 tokenizer.json), and optionally "script" (default
 teams/01-data-a/shards/run_shards.py), "out" (default <run>/shards), "tokens", "packs" (only these packs), "pack_table" and
-"any_tokenizer" (tests only). apply takes "link" (default true: untouched parts are hard-linked, not copied). Scripts run with
+"any_tokenizer" (tests only). apply takes "link" (default true: untouched parts are hard-linked, not copied). ledger takes "raw"
+(optional: the raw parts the cleaner read; with it the ledger says keep / fix / drop per document, mode B, else the
+cleaner's decision is "unknown", mode C); it reads dedup_log.jsonl when the dedup folder has one. Scripts run with
 python -I, which ignores user site-packages and PYTHONPATH: install pyarrow and the rest into the environment itself.
 Each script's output streams to <run>/logs/<stage>.log (F2: logs/f2_<split>[_<pack>].log).
-Without stages.shards the run stops after survivor_loss, and "to": "shards" is an error.
+Without stages.shards the run stops after the ledger, and "to": "shards" is an error.
 
 CONFIG (JSON; keys starting with "_" are comments; paths relative to the repository root, or absolute)
 =====================================================================================================
@@ -63,13 +67,16 @@ CHECKS (any failure stops the run; exit code 1)
   f2        per split: its rows = apply's kept rows; every part's report names, as input_sha256, the sha256 apply wrote;
             one fingerprint set; kept + dropped + errors = rows; no errors; no stale Parquet under final/<split>
   survivor  groups = the groups in dedup_groups.csv
+  ledger    its cleaned rows = the cleaned rows; removed_by_dedup = apply's removed; dropped_by_f2, f2_error and kept =
+            F2's; one fingerprint set, F2's (ledger.py also checks every final part holds the ledger's kept docs in order)
   from      every earlier stage's output still has the digest the manifest recorded for it
 
 MANIFEST
 ========
 <out>/<run_id>/pipeline_manifest.json: the git commit, Python and pyarrow versions; per stage its mode, command, the script's
-sha256, its output folder's digest and file count, its counts, its checks and its seconds; all checks; totals (cleaned, removed
-by dedup, dropped by F2, final, and shards_written when the shard stage ran). A digest is the sha256 over the sorted relative path and sha256 of every file in the folder;
+sha256, its output folder's digest and file count, its counts, its checks and its seconds; all checks; totals (raw and dropped
+by clean when the ledger ran in mode B, cleaned, removed by dedup, dropped by F2, final, and shards_written when the shard
+stage ran). A digest is the sha256 over the sorted relative path and sha256 of every file in the folder;
 JSON summaries are hashed without the fields that change between identical runs (timings, absolute paths, skip flags), so two
 runs on the same inputs give the same digests. IDs, counts and hashes only.
 """
@@ -83,7 +90,7 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[2]
 sys.path.insert(0, str(HERE))
 import stage_args  # noqa: E402  (how clean, overlap and dedup get their paths)
-STAGES = ("clean", "overlap", "dedup", "apply", "f2", "survivor_loss", "shards")
+STAGES = ("clean", "overlap", "dedup", "apply", "f2", "survivor_loss", "ledger", "shards")
 OPTIONAL = ("shards",)  # runs only when stages.shards is configured
 EXTERNAL = ("clean", "overlap", "dedup")
 NEEDED = {"overlap": ("overlap_summary.json", "overlap_matches.csv", "overlap_docs.parquet"),
@@ -91,7 +98,7 @@ NEEDED = {"overlap": ("overlap_summary.json", "overlap_matches.csv", "overlap_do
 DEFAULT_F2 = "teams/01-data-a/spec_v1/run_f2.py"
 DEFAULT_SHARDS = "teams/01-data-a/shards/run_shards.py"
 SPLITS = ("train", "heldout")
-RESERVED = ("deduped", "final", "report", "shards", "cfg", "logs")  # folders of the run that no stage output may take
+RESERVED = ("deduped", "final", "report", "ledger", "shards", "cfg", "logs")  # folders of the run that no stage output may take
 VOLATILE = {"seconds", "input", "path", "cleaned", "skipped"}  # JSON fields that differ between identical runs
 
 
@@ -205,7 +212,7 @@ class Run:
             return path(spec["output"]) if spec.get("output") else self.dir / stage  # default: inside the run folder
         if stage == "shards":
             return path(self.stages["shards"]["out"]) if self.stages.get("shards", {}).get("out") else self.dir / "shards"
-        return self.dir / {"apply": "deduped", "f2": "final", "survivor_loss": "report"}[stage]
+        return self.dir / {"apply": "deduped", "f2": "final", "survivor_loss": "report", "ledger": "ledger"}[stage]
 
     def shown(self, p):
         """A path as the manifest and the plan show it: relative to the repository when inside it, else absolute."""
@@ -263,6 +270,9 @@ class Run:
             script = self.stages.get("f2", {}).get("script", DEFAULT_F2)
             if not path(script).is_file():
                 raise Stop(f"config: f2 script {script} not found (run_f2.py is teams/01-data-a/spec_v1/run_f2.py; set stages.f2.script)")
+        raw = self.stages.get("ledger", {}).get("raw")
+        if STAGES.index(upto) >= STAGES.index("ledger") and raw is not None and not path(raw).is_dir():
+            raise Stop(f"config: stages.ledger.raw {raw} is not a folder")
         if "shards" in self.stages or upto == "shards":
             self.validate_shards(upto)
         outs = {stage: self.output(stage).resolve() for stage in active}
@@ -281,7 +291,7 @@ class Run:
         if STAGES.index(upto) < STAGES.index("shards"):
             return
         if not isinstance(spec, dict):
-            raise Stop("config: stages.shards is not configured (it needs at least a tokenizer); the run stops after survivor_loss without it")
+            raise Stop("config: stages.shards is not configured (it needs at least a tokenizer); the run stops after the ledger without it")
         if not spec.get("tokenizer") or not path(spec["tokenizer"]).is_file():
             raise Stop(f"config: stages.shards.tokenizer {spec.get('tokenizer')!r} is missing or not a file")
         script = spec.get("script", DEFAULT_SHARDS)
@@ -299,7 +309,7 @@ class Run:
     def plan(self, to=None):
         """What a run would do, as text: each stage's mode, output folder and command, with every path resolved. The config is
         checked first, as for a run; nothing is run or written."""
-        to = to or self.cfg.get("to") or (STAGES[-1] if "shards" in self.stages else "survivor_loss")
+        to = to or self.cfg.get("to") or (STAGES[-1] if "shards" in self.stages else "ledger")
         if to not in STAGES:
             raise Stop(f"unknown stage {to!r}; stages are {', '.join(STAGES)}")
         self.validate(to)
@@ -517,6 +527,33 @@ class Run:
         return {"mode": "run", "command": ["teams/01-data-a/pipeline/survivor_loss.py"], "code_sha256": s["code_sha256"],
                 "output": "report", "counts": {**s["groups"], "survivors_dropped_by_f2": s["survivors_dropped_by_f2"]}}
 
+    def stage_ledger(self):
+        import ledger
+        raw = self.stages.get("ledger", {}).get("raw")
+        dedup = self.output("dedup")
+        log = dedup / "dedup_log.jsonl"
+        try:
+            s = ledger.build(self.output("clean"), dedup / "remove_list.csv", dedup / "dedup_groups.csv",
+                             self.output("f2"), self.output("ledger"), log=log if log.is_file() else None,
+                             raw=path(raw) if raw is not None else None)
+        except ledger.Stop as e:
+            raise Stop(f"ledger: {e}")
+        t, c = s["totals"], {st: self.done[st]["counts"] for st in ("clean", "apply", "f2")}
+        self.check("ledger holds every cleaned row", t["rows_cleaned"] == c["clean"]["rows"],
+                   f"ledger {t['rows_cleaned']}, cleaned rows {c['clean']['rows']}")
+        self.check("ledger removed_by_dedup = apply's removed", t["removed_by_dedup"] == c["apply"]["removed"],
+                   f"ledger {t['removed_by_dedup']}, apply {c['apply']['removed']}")
+        self.check("ledger dropped_by_f2 = F2's", t["dropped_by_f2"] == c["f2"]["dropped_by_f2"],
+                   f"ledger {t['dropped_by_f2']}, F2 {c['f2']['dropped_by_f2']}")
+        self.check("ledger f2_error = F2's errors", t["f2_error"] == c["f2"]["errors"],
+                   f"ledger {t['f2_error']}, F2 {c['f2']['errors']}")
+        self.check("ledger kept = F2's kept", t["kept"] == c["f2"]["kept"], f"ledger {t['kept']}, F2 {c['f2']['kept']}")
+        self.check("ledger used F2's fingerprint set", s["inputs"]["set_sha256"] == self.done["f2"]["set_sha256"],
+                   f"{str(s['inputs']['set_sha256'])[:12]}… vs {str(self.done['f2']['set_sha256'])[:12]}…")
+        return {"mode": "run", "command": ["teams/01-data-a/pipeline/ledger.py"], "code_sha256": s["code_sha256"],
+                "output": "ledger", "clean_mode": s["clean_mode"],
+                "counts": {k: v for k, v in t.items() if v is not None}}
+
     def stage_shards(self):
         """The cleaning_pipeline.json of the run, then run_shards.py on final/. The manifest on disk (written after the earlier
         stages) is what the shard writer reads; this stage's own record is added to the manifest afterwards."""
@@ -558,7 +595,7 @@ class Run:
     # --- the run ----------------------------------------------------------------------------------------------------
     def execute(self, start=None, to=None):
         start = start or self.cfg.get("from") or STAGES[0]
-        to = to or self.cfg.get("to") or (STAGES[-1] if "shards" in self.stages else "survivor_loss")
+        to = to or self.cfg.get("to") or (STAGES[-1] if "shards" in self.stages else "ledger")
         for s in (start, to):
             if s not in STAGES:
                 raise Stop(f"unknown stage {s!r}; stages are {', '.join(STAGES)}")
@@ -597,6 +634,8 @@ class Run:
             totals["final"] = c["f2"]["kept"]
         if "shards" in c:
             totals["shards_written"] = c["shards"]["written"]
+        if "ledger" in c and self.done["ledger"].get("clean_mode") == "B":
+            totals = {"raw": c["ledger"]["rows"], "dropped_by_clean": c["ledger"]["dropped_by_clean"], **totals}
         stages = [self.done[s] for s in STAGES if s in self.done]
         manifest = {"tool": "run_pipeline.py", "run_id": self.cfg["run_id"], "config": self.cfg,
                     "code_sha256": sha256(Path(__file__)), "git_commit": git_commit(),
