@@ -15,7 +15,7 @@ The **Clean → Dedup → F2** pipeline of Data A, as one command. It chains the
 | **Order** | clean → overlap → dedup → **apply the remove list** → **F2** → **survivor loss** → **shards** (optional) |
 | **In** | the cleaned parts (`train/`, `heldout/`) and the outputs of overlap and dedup |
 | **Out** | filtered Parquet in the same layout, same schema, unchanged text · `pipeline_manifest.json` |
-| **New here** | `apply_dedup.py` · `survivor_loss.py` · `run_pipeline.py` · `pipeline.json` · `stage_args.py` · 109 tests |
+| **New here** | `apply_dedup.py` · `survivor_loss.py` · `run_pipeline.py` · `pipeline.json` · `stage_args.py` · `local_trial/` · 119 tests |
 | **Reused, never copied** | `spec_v1/run_clean.py` (#244) · `dedup/overlap.py`, `dedup/dedup.py` (#255) · `spec_v1/run_f2.py` (#35) |
 | **Needs** | Python 3.9+ with `pyarrow`; `pytest` for the tests |
 
@@ -40,6 +40,8 @@ python -I teams/01-data-a/pipeline/run_pipeline.py --config teams/01-data-a/pipe
 ```
 
 The command line takes only `--config` and `--plan`. Everything that defines a run is a key in the config file (see Configuration), so a run is reproduced from that file alone.
+
+**Try it on six small files first:** [local_trial/](local_trial/README.md) has example configs for a full run, stopping early, resuming in steps, adopting a folder and the expected errors, and the commands to run them and keep the local log a job request asks for.
 
 Each step also runs on its own:
 
@@ -413,13 +415,14 @@ Smoke run on 13 Nov: a Windows laptop, one process, two packs of cleaned sample 
 ## Tests
 
 ```bash
-python -m pytest teams/01-data-a/pipeline/tests -q      # 109 passed
+python -m pytest teams/01-data-a/pipeline/tests -q      # 119 passed
 ```
 
 | File | Tests | Covers |
 |---|:-:|---|
 | `test_apply_dedup.py` | 25 | exact removal · byte copies · hard links (and `--copy`) · the same doc_id in two parts · Windows `\` paths · 8 bad lists, each with the bad row in the last part processed and nothing written · an unreadable or column-less part · row-group boundaries, with zstd kept · stale outputs · a corrupted output redone on rerun · train-only · resume · no text in the summary · CLI |
 | `test_survivor_loss.py` | 9 | lost · partly hit · untouched · without survivor · split + part + doc_id matching · F2 errors count as dropped · no drops · an uncovered part · mixed fingerprint sets · CLI |
+| `test_local_trial.py` | 10 | the trial configs agree with each other and with the tracked sample manifest (pin, parts, run ids, steps) and each has its command in the trial README · `show.py` prints a run and flags a failed check |
 | `test_stage_args.py` | 19 | the command each stage script gets: a generated config for clean, overlap and dedup (path keys filled in, other settings kept) · `only` · the settings pin · outputs outside `out/` or the repository refused |
 | `test_run_pipeline.py` | 56 | the full chain (13 → 11 → 9) · parallel F2 gives the same result as one process · a crashed pack is named and a rerun recovers · bad `workers` values · identical runs give identical digests · `--from` keeps earlier checks · a changed adopted folder · dedup from another overlap run · overlap of other parts · count mismatch · held-out removed · F2 errors · F2 that read other files · stale F2 output · train-only · `run` mode success and failure · a bad config stopped before anything runs · CLI |
 
