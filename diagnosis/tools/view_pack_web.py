@@ -503,6 +503,10 @@ def read_pack(path):
     return docs
 
 
+class NoChangedDocs(ValueError):
+    """changed_only was asked for, but every primary document is unchanged."""
+
+
 def load_packs(primary_path, comparison_path=None, changed_only=False):
     """Keep primary order/count intact, including rows missing from secondary.
 
@@ -522,7 +526,7 @@ def load_packs(primary_path, comparison_path=None, changed_only=False):
                     if d["doc_id"] not in comparison
                     or (comparison[d["doc_id"]]["text"] or "") != (d["text"] or "")]
             if not docs:
-                raise ValueError(
+                raise NoChangedDocs(
                     f"all {State.total_docs} documents in {primary_path} are unchanged in "
                     f"{comparison_path}; nothing to show with --changed-only")
     elif changed_only:
@@ -1001,7 +1005,8 @@ function renderMarkdown(text){
       i++;
       out.push('<pre><code>'+escapeHtml(code.join('\n'))+'</code></pre>'); continue;
     }
-    let h = line.match(/^(#{1,6})\s+(.*)$/);
+    // [^]* not .*: JS '.' stops at \r / U+2028, so "# x\r" (CRLF files) failed here
+    let h = line.match(/^(#{1,6})\s+([^]*)$/);
     if(h){ const n=h[1].length; out.push('<h'+n+'>'+mdInline(h[2])+'</h'+n+'>'); i++; continue; }
     if(/^\s*>/.test(line)){
       let q=[]; while(i<lines.length && /^\s*>/.test(lines[i])){ q.push(lines[i].replace(/^\s*>\s?/,'')); i++; }
@@ -1023,6 +1028,7 @@ function renderMarkdown(text){
     }
     if(line.trim()===''){ i++; continue; }
     let para=[]; while(i<lines.length && lines[i].trim()!=='' && !/^(#{1,6}\s|```|\s*>|\s*([-*+]|\d+\.)\s)/.test(lines[i])){ para.push(lines[i]); i++; }
+    if(!para.length){ para.push(lines[i]); i++; }   // always advance: never loop forever on an odd line
     out.push('<p>'+mdInline(para.join(' '))+'</p>');
   }
   return out.join('\n');
@@ -1375,6 +1381,7 @@ function fillFields(docId){
   $('f_evidence').value = row.evidence||'';
   $('f_hex').value = row.hex||'';
   $('f_note').value = row.note||'';
+  applySelectDefaults();
   $('rowState').textContent = saved[docId] ? 'saved' : '';
   syncDiseaseChecks();
   updateHexWarn();
@@ -1392,12 +1399,31 @@ function csvField(s){
   return /[",\n\r]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s;
 }
 const CSV_HEADER = 'doc_id,read,verdict,diseases,evidence,hex,note';
-function currentRowValues(){
-  return {
-    doc_id: $('f_doc_id').value, read: $('f_read').value, verdict: $('f_verdict').value,
+// read/verdict dropdowns show their first value when the row has none. Such a
+// value is only a display default ("auto"): it is not kept in memory or
+// localStorage, and reaches labels.csv only when Save is clicked on this doc
+// or the row gets a real label (then what is on screen is what is stored).
+const SELECT_DEFAULTS = {f_read:'full', f_verdict:'clean'};
+function isAuto(id){ return $(id).dataset.auto === '1'; }
+function applySelectDefaults(){
+  for(const [id, v] of Object.entries(SELECT_DEFAULTS)){
+    const el = $(id);
+    if(el.value){ delete el.dataset.auto; } else { el.value = v; el.dataset.auto = '1'; }
+  }
+}
+function currentRowValues(withDefaults){
+  const r = {
+    doc_id: $('f_doc_id').value,
+    read: isAuto('f_read') ? '' : $('f_read').value,
+    verdict: isAuto('f_verdict') ? '' : $('f_verdict').value,
     diseases: $('f_diseases').value, evidence: $('f_evidence').value,
     hex: $('f_hex').value, note: $('f_note').value,
   };
+  if(withDefaults || !isEmptyRow(r)){
+    if(isAuto('f_read')) r.read = $('f_read').value;
+    if(isAuto('f_verdict')) r.verdict = $('f_verdict').value;
+  }
+  return r;
 }
 // Live preview of the row being built, in the CSV box below the save button.
 // Save button: orange while anything differs from labels.csv (the form on screen
@@ -1413,7 +1439,7 @@ function updateSaveBtn(){
   btn.textContent = n ? 'save labels.csv \u25cf '+n+' unsaved' : 'save labels.csv (saved)';
 }
 function renderRowPreview(){
-  const r = currentRowValues();
+  const r = currentRowValues(true);   // what Save would write for this doc
   const line = ['doc_id','read','verdict','diseases','evidence','hex','note']
                  .map(k=>csvField(r[k])).join(',');
   $('exportBox').value = CSV_HEADER + '\n' + line;
@@ -1595,6 +1621,12 @@ function appendValue(fieldId, value){
 $('f_evidence').addEventListener('focus', ()=>appendSelFill('f_evidence', 'evidence'));
 $('f_hex').addEventListener('focus', ()=>appendSelFill('f_hex', 'hex'));
 $('f_diseases').addEventListener('input', ()=>{ syncDiseaseChecks(); updateHexWarn(); renderRowPreview(); });
+// picking a dropdown value by hand makes it a real (non-default) value
+['f_read','f_verdict'].forEach(id=>{
+  const real = ()=>{ delete $(id).dataset.auto; };
+  $(id).addEventListener('input', real);
+  $(id).addEventListener('change', real);
+});
 ['f_read','f_verdict','f_evidence','f_hex','f_note'].forEach(id=>{
   $(id).addEventListener('input', renderRowPreview);
   $(id).addEventListener('change', renderRowPreview);
@@ -1602,9 +1634,9 @@ $('f_diseases').addEventListener('input', ()=>{ syncDiseaseChecks(); updateHexWa
 
 // Commit the current doc's field values into the in-memory store + localStorage
 // buffer (does NOT touch disk). Called on navigation and before saving.
-function commitCurrent(){
+function commitCurrent(withDefaults){
   if(!cur) return;
-  const r = currentRowValues();
+  const r = currentRowValues(withDefaults);
   // the form on screen is what gets saved. An emptied row that is in the CSV is
   // kept as an empty row, which save turns into "remove it"; one that never
   // reached the CSV is just dropped.
@@ -1617,6 +1649,7 @@ function commitCurrent(){
 $('clearRow').onclick = ()=>{
   if(!cur) return;
   ['f_read','f_verdict','f_diseases','f_evidence','f_hex','f_note'].forEach(id=>{ $(id).value=''; });
+  applySelectDefaults();
   syncDiseaseChecks(); updateHexWarn();
   commitCurrent(); renderRowPreview();
   $('exportMsg').textContent = disk[cur.doc_id]
@@ -1625,7 +1658,8 @@ $('clearRow').onclick = ()=>{
 };
 
 $('exportBtn').onclick = async ()=>{
-  commitCurrent();
+  commitCurrent(true);   // Save on this doc keeps the dropdown defaults shown
+  Object.keys(SELECT_DEFAULTS).forEach(id=>{ delete $(id).dataset.auto; });
   const rows = Object.values(dirtyRows());   // only edited rows; the server merges by doc_id
   const res = await fetch('/api/save', {method:'POST', headers:{'Content-Type':'application/json'},
      body: JSON.stringify({rows})});

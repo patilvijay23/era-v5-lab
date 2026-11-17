@@ -48,6 +48,7 @@ class Hub:
     current = None        # key of the loaded pair
     changed_only = True
     random_nav = True
+    note = ""            # shown in the sidebar, e.g. when a 0-change pack falls back to all docs
     lock = threading.Lock()
 
 
@@ -91,8 +92,15 @@ def select(key, changed_only, random_nav):
     with Hub.lock:
         old = (vpw.State.docs, vpw.State.doc_index, vpw.State.comparison,
                vpw.State.primary_name, vpw.State.comparison_name, vpw.State.out_path)
+        note = ""
         try:
-            vpw.load_packs(p["pre"], p["post"], changed_only)
+            try:
+                vpw.load_packs(p["pre"], p["post"], changed_only)
+            except vpw.NoChangedDocs:
+                # nothing changed in this pack: show every doc instead of refusing to open
+                vpw.load_packs(p["pre"], p["post"], False)
+                note = (f"No changed docs in {key}: showing all "
+                        f"{len(vpw.State.docs)} (pre and post are identical).")
         except Exception:
             (vpw.State.docs, vpw.State.doc_index, vpw.State.comparison,
              vpw.State.primary_name, vpw.State.comparison_name, vpw.State.out_path) = old
@@ -101,9 +109,10 @@ def select(key, changed_only, random_nav):
         vpw.State.comparison_name = f"{p['pack']} (post)"
         vpw.State.out_path = p["out"]
         Hub.current, Hub.changed_only, Hub.random_nav = key, changed_only, random_nav
+        Hub.note = note
     print(f"[{key}] {len(vpw.State.docs)} docs shown"
           f"{' (changed only)' if changed_only else ''}{' (random next)' if random_nav else ''}"
-          f"  ->  saves to {p['out']}")
+          f"  ->  saves to {p['out']}{'  [' + note + ']' if note else ''}")
 
 
 def build_page():
@@ -131,7 +140,7 @@ class HubHandler(vpw.Handler):
         if path == "/api/packs":
             return self._json({
                 "current": Hub.current, "changed_only": Hub.changed_only,
-                "random": Hub.random_nav,
+                "random": Hub.random_nav, "note": Hub.note,
                 "packs": [{k: p[k] for k in ("key", "pack", "part", "changed", "total")}
                           for p in Hub.pairs],
             })
@@ -169,6 +178,7 @@ SIDEBAR_CSS = r"""
   #hub .pk.zero { opacity:.45; }
   #hub .cnt { color:var(--muted); font-size:11px; white-space:nowrap; }
   #hubMsg { color:#f48771; font-size:12px; min-height:1em; }
+  #hubNote { color:#d7ba7d; font-size:12px; margin:4px 0; }
   #hubBusy[hidden] { display:none; }
   #hubBusy { position:fixed; inset:0; background:rgba(0,0,0,.55); z-index:50;
              display:flex; align-items:center; justify-content:center; font-size:18px; }
@@ -181,6 +191,7 @@ SIDEBAR_HTML = r"""
     <label><input type="checkbox" id="optChanged"> Only changed docs</label>
     <label><input type="checkbox" id="optRandom"> Random next (far jumps)</label>
     <button id="optApply">Apply</button>
+    <div id="hubNote" hidden></div>
     <div id="hubMsg"></div>
   </div>
   <div id="hubList">loading…</div>
@@ -221,6 +232,7 @@ SIDEBAR_JS = r"""
   async function refresh(first){
     state = await (await fetch('/api/packs')).json();
     if(first){ el('optChanged').checked = state.changed_only; el('optRandom').checked = state.random; }
+    el('hubNote').textContent = state.note || ''; el('hubNote').hidden = !state.note;
     render();
     if(state.packs.some(p => p.changed===null)) setTimeout(refresh, 3000);
   }
