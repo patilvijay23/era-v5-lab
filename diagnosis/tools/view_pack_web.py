@@ -33,6 +33,7 @@ Usage
     python view_pack_web.py <pack.parquet> [--start N] [--port 8000]
     python view_pack_web.py <pack.parquet> --out labels.csv   # server-side save
     python view_pack_web.py <pre.parquet> <post.parquet> --out audit.csv
+    python view_pack_web.py <pre.parquet> <post.parquet> --changed-only --random
 
 Then open http://127.0.0.1:8000 in a browser.
 """
@@ -480,6 +481,7 @@ class State:
     comparison = None  # optional doc_id -> secondary row; never drives navigation
     primary_name = ""
     comparison_name = ""
+    total_docs = 0  # primary rows before any --changed-only filtering
 
 
 def read_pack(path):
@@ -501,14 +503,30 @@ def read_pack(path):
     return docs
 
 
-def load_packs(primary_path, comparison_path=None):
-    """Keep primary order/count intact, including rows missing from secondary."""
+def load_packs(primary_path, comparison_path=None, changed_only=False):
+    """Keep primary order/count intact, including rows missing from secondary.
+
+    With changed_only (requires a comparison pack), drop primary rows whose
+    text is byte-identical in the comparison pack. Rows missing from the
+    comparison pack are kept (they count as changed).
+    """
     docs = read_pack(primary_path)
     if not docs:
         raise ValueError(f"{primary_path}: primary pack is empty")
     comparison = None
+    State.total_docs = len(docs)
     if comparison_path is not None:
         comparison = {d["doc_id"]: d for d in read_pack(comparison_path)}
+        if changed_only:
+            docs = [d for d in docs
+                    if d["doc_id"] not in comparison
+                    or (comparison[d["doc_id"]]["text"] or "") != (d["text"] or "")]
+            if not docs:
+                raise ValueError(
+                    f"all {State.total_docs} documents in {primary_path} are unchanged in "
+                    f"{comparison_path}; nothing to show with --changed-only")
+    elif changed_only:
+        raise ValueError("--changed-only needs a comparison pack")
     State.docs = docs
     State.doc_index = {d["doc_id"]: i for i, d in enumerate(docs)}
     State.comparison = comparison
@@ -694,6 +712,11 @@ def main():
     ap.add_argument("pack", help="Primary Parquet pack (controls navigation and annotations)")
     ap.add_argument("comparison_pack", nargs="?",
                     help="Optional post-cleaning pack, left-joined to the primary by doc_id")
+    ap.add_argument("--changed-only", action="store_true",
+                    help="With a comparison pack, show only documents whose text changed "
+                         "(or that are missing from the comparison pack)")
+    ap.add_argument("--random", action="store_true",
+                    help="'next' jumps to a random unvisited document; 'back' retraces visited ones")
     ap.add_argument("--start", type=int, default=0)
     ap.add_argument("--port", type=int, default=8000)
     ap.add_argument("--host", default="127.0.0.1",
@@ -703,7 +726,7 @@ def main():
     a = ap.parse_args()
 
     try:
-        load_packs(a.pack, a.comparison_pack)
+        load_packs(a.pack, a.comparison_pack, a.changed_only)
     except (ValueError, OSError) as exc:
         ap.error(str(exc))
     State.out_path = a.out
@@ -716,12 +739,16 @@ def main():
     ]).encode("utf-8")).hexdigest()
     PAGE = (PAGE.replace("__START__", str(start))
             .replace("__VISIBLE__", json.dumps(VISIBLE))
-            .replace("__STORAGE_ID__", storage_id))
+            .replace("__STORAGE_ID__", storage_id)
+            .replace("__RANDOM_NAV__", "true" if a.random else "false"))
 
     srv = ThreadingHTTPServer((a.host, a.port), Handler)
     shown_host = "127.0.0.1" if a.host == "0.0.0.0" else a.host
     url = f"http://{shown_host}:{a.port}"
     print(f"Loaded {len(State.docs)} documents from {a.pack}")
+    if a.changed_only:
+        print(f"--changed-only: showing {len(State.docs)} changed of {State.total_docs} "
+              f"({State.total_docs - len(State.docs)} unchanged hidden)")
     if State.comparison is not None:
         matched = sum(d["doc_id"] in State.comparison for d in State.docs)
         print(f"Comparison: {a.comparison_pack}; {matched}/{len(State.docs)} primary IDs matched")
@@ -1457,8 +1484,14 @@ async function load(i, docId=null){
      + (cur.url? '  '+cur.url : '');
   $('jump').value = cur.i+1;
   $('jump').max = cur.count;
-  $('prev').disabled = idx===0;
-  $('next').disabled = idx===cur.count-1;
+  seen.add(cur.i);
+  if(RANDOM_NAV){
+    $('prev').disabled = navHistory.length===0;
+    $('next').disabled = cur.count<=1;
+  } else {
+    $('prev').disabled = idx===0;
+    $('next').disabled = idx===cur.count-1;
+  }
   renderDiag(cur);
   // markdown
   $('md').innerHTML = renderMarkdown(cur.raw_text);
@@ -1472,8 +1505,42 @@ async function load(i, docId=null){
 }
 
 // ---- events ----
-$('prev').onclick = ()=> load(Math.max(0, idx-1));
-$('next').onclick = ()=> load(Math.min((cur?cur.count:1)-1, idx+1));
+// --random: "next" picks a random document not yet visited this session
+// (starting over once every document has been seen); "back" retraces the
+// documents visited via "next", most recent first.
+const RANDOM_NAV = __RANDOM_NAV__;
+const seen = new Set();
+const navHistory = [];
+function randomNext(){
+  // Jump far: the new index must be at least MIN_GAP away from the current
+  // document and the last few visited ones, so consecutive picks never come
+  // from the same neighbourhood/batch of the pack.
+  const n = cur ? cur.count : 1;
+  if(n<=1) return idx;
+  if(seen.size>=n){ seen.clear(); seen.add(idx); }
+  const MIN_GAP = Math.max(1, Math.min(1000, Math.floor(n/10)));
+  const recent = navHistory.slice(-5).concat([idx]);
+  const far = j => recent.every(r => Math.abs(j-r) >= MIN_GAP);
+  for(let t=0;t<500;t++){
+    const j = Math.floor(Math.random()*n);
+    if(!seen.has(j) && far(j)) return j;
+  }
+  for(let t=0;t<500;t++){            // fall back: any unvisited, far from current
+    const j = Math.floor(Math.random()*n);
+    if(!seen.has(j) && Math.abs(j-idx) >= MIN_GAP) return j;
+  }
+  for(let j=0;j<n;j++){ if(!seen.has(j)) return j; }
+  return idx;
+}
+$('prev').onclick = ()=> {
+  if(!RANDOM_NAV) return load(Math.max(0, idx-1));
+  if(navHistory.length) load(navHistory.pop());
+};
+$('next').onclick = ()=> {
+  if(!RANDOM_NAV) return load(Math.min((cur?cur.count:1)-1, idx+1));
+  const j = randomNext();
+  if(j!==idx){ navHistory.push(idx); load(j); }
+};
 $('jump').onchange = e => { const n=parseInt(e.target.value,10)-1; if(!isNaN(n)) load(n); };
 $('goId').onclick = ()=>{
   const id=$('jumpId').value.trim(); if(!id) return;
