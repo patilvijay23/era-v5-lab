@@ -10,7 +10,7 @@
 #
 # It runs these steps (about 6 to 8 minutes) and ends with a SUMMARY and RESULT: PASS or FAIL:
 #   build    clean.py is exactly what build_clean.py makes from the sheet (catches a forgotten rebuild)
-#   pytest   the whole test suite
+#   pytest   the whole test suite: tests/, then spec_v1_1/tests/
 #   trees    $WORK/before and $WORK/after, the two clean.py (stops if they are identical: nothing to compare)
 #   speed    output sha256 and docs/s of both on every pack in --packs, then compare (the sha256 must match on all)
 #   profile  per-rule time of both on the profile packs (the SUMMARY shows the rule times and the next slowest rules)
@@ -32,8 +32,7 @@
 #   --profile-packs "p1 p2"  packs to profile and report docs/s for     (default: the first 2 packs the rule runs on)
 #   --count-packs "p1 p2"    packs to count on                          (default: every pack the rule runs on)
 #   --sheet FILE   sheet the build step builds clean.py from, if not spec_v1_1/sheets/specv1_1.md, the default of
-#                  build_clean.py (for example the frozen spec_v1/sheets/specv1.md); relative to the current folder, or
-#                  absolute  [SHEET]
+#                  spec_v1_1/build/build_clean.py; relative to the current folder, or absolute  [SHEET]
 #   --include-all  speed also runs ind-mr-sangraha-v, which is left out by default (use with a folder of Indic packs)
 #   --expected-packs "p1 p2" exact required speed/harm inventory (default: original 13; --include-all: all registered packs)
 # Python with pyarrow: the PY environment variable (default: the era5 conda python).
@@ -77,7 +76,7 @@ for f in BEFORE_CLEAN AFTER_CLEAN; do      # a clean.py given on the command lin
   [ -f "${!f}" ] || { echo "--${f%_CLEAN}-clean: no such file: ${!f}" >&2; exit 2; }
   printf -v "$f" '%s' "$(cd "$(dirname "${!f}")" && pwd)/$(basename "${!f}")"
 done
-CLEAN="${AFTER_CLEAN:-$REPO/$TEAM/spec_v1/clean.py}"; CHECK="$HERE/speed_check.py"; FAIL=0
+CLEAN="${AFTER_CLEAN:-$REPO/$TEAM/spec_v1_1/clean.py}"; CHECK="$HERE/speed_check.py"; FAIL=0
 PIN=(); command -v taskset >/dev/null && PIN=(taskset -c 0)          # CPU 0 and 1 are one physical core on the author's laptop
 EXCL=(); [ ${#EXCLUDE[@]} -gt 0 ] && EXCL=(--exclude "${EXCLUDE[@]}")
 LIM=();  [ "$LIMIT" -gt 0 ] && LIM=(--limit "$LIMIT")
@@ -95,7 +94,7 @@ EOF
 fi
 BUILD_RESULT="not run"; PYTEST_LINE="not run"; HARM_RESULT="not run"; SPEED_RAN=0; PROFILE_RAN=0; COUNT_RAN=0
 say() { printf '\n== %s\n' "$*"; }
-tree() { echo "$WORK/$1/$TEAM/spec_v1"; }
+tree() { echo "$WORK/$1/$TEAM/spec_v1"; }   # spec v1's tools (run_clean.py, validate/), with the clean.py under test put next to them
 need_trees() { [ -f "$(tree before)/clean.py" ] && [ -f "$(tree after)/clean.py" ] || { echo "run the trees step first"; exit 1; }; }
 
 # the packs the first rule runs on (its SCOPE in clean.py) that exist in --packs: the defaults for profile and count
@@ -118,19 +117,22 @@ echo "rules: ${RULES:-none}; before: $BEFORE; after: $AFTER; profile packs: ${PR
 
 stage_build() {
   say "build: clean.py is the fresh build of ${SHEET:-spec_v1_1/sheets/specv1_1.md}"
-  if "$PY" -I "$REPO/$TEAM/spec_v1/build/build_clean.py" "${SHEET_ARGS[@]}" --out "$WORK/fresh_clean.py" >/dev/null && cmp -s "$WORK/fresh_clean.py" "$CLEAN"; then
+  if "$PY" -I "$REPO/$TEAM/spec_v1_1/build/build_clean.py" "${SHEET_ARGS[@]}" --out "$WORK/fresh_clean.py" >/dev/null && cmp -s "$WORK/fresh_clean.py" "$CLEAN"; then
     BUILD_RESULT="ok, clean.py $(sha256sum "$CLEAN" | cut -c1-12) is the fresh build of ${SHEET:-specv1_1.md}"
   else
-    BUILD_RESULT="FAIL: clean.py differs from a fresh build. Run: python -I $TEAM/spec_v1/build/build_clean.py ${SHEET_ARGS[*]}"; FAIL=1
+    BUILD_RESULT="FAIL: clean.py differs from a fresh build. Run: python -I $TEAM/spec_v1_1/build/build_clean.py ${SHEET_ARGS[*]}"; FAIL=1
   fi
   echo "$BUILD_RESULT"
 }
 
 stage_pytest() {
-  say "pytest: the whole suite"
-  local out status=0; out="$(cd "$REPO" && "$PY" -m pytest "$TEAM/tests" -q -p no:cacheprovider 2>&1)" || status=$?
-  PYTEST_LINE="$(echo "$out" | tail -1)"
-  if [ "$status" -ne 0 ]; then FAIL=1; echo "$out" | tail -15; else echo "$PYTEST_LINE"; fi
+  say "pytest: the whole suite, tests/ then spec_v1_1/tests/ (one run each: each imports its own clean.py)"
+  local suite out status line; PYTEST_LINE=""
+  for suite in tests spec_v1_1/tests; do
+    status=0; out="$(cd "$REPO" && "$PY" -m pytest "$TEAM/$suite" -q -p no:cacheprovider 2>&1)" || status=$?
+    line="$suite: $(echo "$out" | tail -1)"; PYTEST_LINE="${PYTEST_LINE:+$PYTEST_LINE; }$line"
+    if [ "$status" -ne 0 ]; then FAIL=1; echo "$out" | tail -15; else echo "$line"; fi
+  done
 }
 
 stage_trees() {
@@ -138,11 +140,12 @@ stage_trees() {
   rm -rf "$WORK/before" "$WORK/after"; mkdir -p "$WORK/before" "$WORK/after"
   local rev="$AFTER"; [ "$AFTER" = worktree ] && rev=HEAD
   git -C "$REPO" archive "$rev" | tar -x -C "$WORK/after"
-  [ "$AFTER" = worktree ] && cp "$CLEAN" "$(tree after)/clean.py"
+  if [ "$AFTER" = worktree ]; then cp "$CLEAN" "$(tree after)/clean.py"
+  else cp "$WORK/after/$TEAM/spec_v1_1/clean.py" "$(tree after)/clean.py" || { echo "no spec_v1_1/clean.py at $AFTER"; exit 1; }; fi
   [ -n "$AFTER_CLEAN" ] && cp "$AFTER_CLEAN" "$(tree after)/clean.py"
   cp -r "$WORK/after/." "$WORK/before/"
   if [ -n "$BEFORE_CLEAN" ]; then cp "$BEFORE_CLEAN" "$(tree before)/clean.py"
-  else git -C "$REPO" show "$BEFORE:$TEAM/spec_v1/clean.py" > "$(tree before)/clean.py" || { echo "no clean.py at $BEFORE"; exit 1; }; fi
+  else git -C "$REPO" show "$BEFORE:$TEAM/spec_v1_1/clean.py" > "$(tree before)/clean.py" || { echo "no spec_v1_1/clean.py at $BEFORE"; exit 1; }; fi
   local b a; b="$(sha256sum "$(tree before)/clean.py" | cut -c1-12)"; a="$(sha256sum "$(tree after)/clean.py" | cut -c1-12)"
   echo "  before $b   after $a"
   if [ "$b" = "$a" ]; then

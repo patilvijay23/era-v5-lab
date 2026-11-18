@@ -110,5 +110,5 @@ As TSAI asked (15 Nov), #435 holds only the combined spec v1.1, the medicine she
 
 ## Open decisions
 
-- **The new codes** (A7, A8, B6, C6, C7, C8, C9, D6, D7) need the team's agreement, and entries in `diagnosis/DISEASES.md` and in `CODE_ORDER` in `teams/01-data-a/spec_v1/build/build_clean.py`.
+- **The new codes** (A7, A8, B6, C6, C7, C8, C9, D6, D7) need the team's agreement, and entries in `diagnosis/DISEASES.md` and in `CODE_ORDER` in `teams/01-data-a/spec_v1_1/build/build_clean.py`.
 - **The gold contradictions** are to be re-read at the next gold refresh.
