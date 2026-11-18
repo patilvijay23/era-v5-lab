@@ -45,7 +45,10 @@ import io
 import json
 import os
 import re
+import tempfile
+import threading
 import unicodedata
+from contextlib import contextmanager
 from collections import Counter
 from difflib import SequenceMatcher
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -612,27 +615,73 @@ def ordered_rows(rowmap):
     return [rowmap[d] for d in sorted(rowmap, key=lambda d: key(d))]
 
 
-def merge_save(incoming):
+SAVE_LOCK = threading.Lock()
+
+
+@contextmanager
+def csv_write_lock(path):
+    """Serialize threads and cooperating processes using a stable sidecar file."""
+    with SAVE_LOCK, open(path + ".lock", "a+b") as lock:
+        if os.name == "nt":
+            import msvcrt
+            if os.fstat(lock.fileno()).st_size == 0:
+                lock.write(b"\0")
+                lock.flush()
+            lock.seek(0)
+            msvcrt.locking(lock.fileno(), msvcrt.LK_LOCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            if os.name == "nt":
+                lock.seek(0)
+                msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(lock, fcntl.LOCK_UN)
+
+
+def merge_save(incoming, include_rows=False):
     """Upsert incoming rows into the on-disk CSV by doc_id; a row whose fields
     are all empty removes that doc_id. Rows not sent are never touched.
 
     Re-reads the current file so rows the browser never touched are preserved.
     Returns (abs_path, total_rows).
     """
-    disk = read_csv_rows(State.out_path)
-    for r in incoming:
-        did = (r.get("doc_id") or "").strip()
-        if not did:
-            continue
-        row = {k: (r.get(k, "") or "") for k in FIELDNAMES}
-        if any(row[k] for k in FIELDNAMES if k != "doc_id"):
-            disk[did] = row
-        else:                       # every field emptied in the UI -> remove the row
-            disk.pop(did, None)
-    csv_text = rows_to_csv(ordered_rows(disk))
-    with open(State.out_path, "w", encoding="utf-8", newline="") as f:
-        f.write(csv_text)
-    return os.path.abspath(State.out_path), len(disk)
+    if not isinstance(incoming, list) or any(
+        not isinstance(r, dict) or not isinstance(r.get("doc_id"), str)
+        or not r["doc_id"].strip()
+        or any(not isinstance(r.get(k, ""), str) for k in FIELDNAMES)
+        for r in incoming
+    ):
+        raise ValueError("rows must be a list of annotation objects with string fields and nonempty doc_id")
+    path = os.path.realpath(State.out_path)
+    with csv_write_lock(path):
+        disk = read_csv_rows(path)
+        for r in incoming:
+            did = r["doc_id"].strip()
+            row = {k: r.get(k, "") for k in FIELDNAMES}
+            if any(row[k] for k in FIELDNAMES if k != "doc_id"):
+                disk[did] = row
+            else:
+                disk.pop(did, None)
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", newline="",
+                                             dir=os.path.dirname(path), delete=False) as f:
+                temporary = f.name
+                if os.path.exists(path):
+                    os.chmod(temporary, os.stat(path).st_mode & 0o777)
+                f.write(rows_to_csv(ordered_rows(disk)))
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temporary, path)
+        finally:
+            if temporary and os.path.exists(temporary):
+                os.unlink(temporary)
+    result = (path, len(disk))
+    return (*result, disk) if include_rows else result
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -645,6 +694,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(body)
 
@@ -696,16 +746,25 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path, _, _ = self.path.partition("?")
-        length = int(self.headers.get("Content-Length", "0"))
-        raw = self.rfile.read(length) if length else b""
         try:
+            length = int(self.headers.get("Content-Length", "0"))
+            if not 0 <= length <= 16 * 1024 * 1024:
+                raise ValueError("invalid request length")
+            raw = self.rfile.read(length) if length else b""
             data = json.loads(raw.decode("utf-8")) if raw else {}
-        except json.JSONDecodeError:
+            if not isinstance(data, dict):
+                raise ValueError("expected an object")
+        except (ValueError, UnicodeDecodeError):
             return self._json({"error": "bad json"}, 400)
         if path in ("/api/save", "/api/export"):
             rows = data.get("rows", [])
-            saved_path, total = merge_save(rows)
-            self._json({"saved": saved_path, "rows": total})
+            try:
+                saved_path, total, baseline = merge_save(rows, include_rows=True)
+            except ValueError as exc:
+                return self._json({"error": str(exc)}, 400)
+            except OSError:
+                return self._json({"error": "Could not write labels CSV; browser drafts are retained"}, 500)
+            self._json({"saved": saved_path, "rows": total, "baseline": baseline})
         else:
             self._json({"error": "not found"}, 404)
 
@@ -1042,6 +1101,8 @@ let hexVersion = 0;
 let hexKey = null;
 const VISIBLE = __VISIBLE__;   // same hidden-char tokens as the Python show()
 const saved = {};         // doc_id -> row object (what the UI shows)
+const clearedRows = new Set();
+let saveInFlight = false;
 let disk = {};            // doc_id -> row as last read from labels.csv
 const LS_KEY = 'view_pack_web_rows:__STORAGE_ID__';
 // NOTE: seeding happens in bootstrap(): CSV (source of truth) first, then
@@ -1374,6 +1435,7 @@ function onCursor(){
 
 function fillFields(docId){
   const row = saved[docId] || {};
+  if(saved[docId] && isEmptyRow(row)) clearedRows.add(docId);
   $('f_doc_id').value = docId;
   $('f_read').value = row.read||'';
   $('f_verdict').value = row.verdict||'';
@@ -1419,7 +1481,8 @@ function currentRowValues(withDefaults){
     diseases: $('f_diseases').value, evidence: $('f_evidence').value,
     hex: $('f_hex').value, note: $('f_note').value,
   };
-  if(withDefaults || !isEmptyRow(r)){
+  if(!isEmptyRow(r)) clearedRows.delete(r.doc_id);
+  if((withDefaults && !clearedRows.has(r.doc_id)) || !isEmptyRow(r)){
     if(isAuto('f_read')) r.read = $('f_read').value;
     if(isAuto('f_verdict')) r.verdict = $('f_verdict').value;
   }
@@ -1648,6 +1711,7 @@ function commitCurrent(withDefaults){
 
 $('clearRow').onclick = ()=>{
   if(!cur) return;
+  clearedRows.add(cur.doc_id);
   ['f_read','f_verdict','f_diseases','f_evidence','f_hex','f_note'].forEach(id=>{ $(id).value=''; });
   applySelectDefaults();
   syncDiseaseChecks(); updateHexWarn();
@@ -1658,27 +1722,36 @@ $('clearRow').onclick = ()=>{
 };
 
 $('exportBtn').onclick = async ()=>{
+  if(saveInFlight) return;
   commitCurrent(true);   // Save on this doc keeps the dropdown defaults shown
-  Object.keys(SELECT_DEFAULTS).forEach(id=>{ delete $(id).dataset.auto; });
+  if(!clearedRows.has(cur.doc_id)) Object.keys(SELECT_DEFAULTS).forEach(id=>{ delete $(id).dataset.auto; });
   const rows = Object.values(dirtyRows());   // only edited rows; the server merges by doc_id
-  const res = await fetch('/api/save', {method:'POST', headers:{'Content-Type':'application/json'},
-     body: JSON.stringify({rows})});
-  const data = await res.json();
-  if(data.saved){
-    // re-read the merged file: it is now the baseline, and picks up rows changed elsewhere
-    try {
-      disk = (await (await fetch('/api/rows')).json()).rows || {};
-      for(const k of Object.keys(saved)) if(!disk[k] && isEmptyRow(saved[k])) delete saved[k];
-      Object.assign(saved, disk);
-    } catch(e){}
+  const submitted=Object.fromEntries(rows.map(r=>[r.doc_id,{...r}]));
+  saveInFlight=true; $('exportBtn').disabled=true;
+  try {
+    const res = await fetch('/api/save', {method:'POST', headers:{'Content-Type':'application/json'},
+       body: JSON.stringify({rows})});
+    const data = await res.json();
+    if(!res.ok || !data.saved) throw new Error(data.error || 'Save failed');
+    // Capture edits made during the request, then acknowledge only its snapshot.
+    commitCurrent();
+    const pending=Object.fromEntries(Object.entries(dirtyRows())
+      .filter(([id,row])=>!sameRow(row,submitted[id])));
+    disk=data.baseline;
+    for(const id of Object.keys(saved)) delete saved[id];
+    Object.assign(saved,disk,pending);
     persistLocal();
+    fillFields(cur.doc_id);
+    $('exportMsg').textContent='saved → '+data.saved+' ('+data.rows+' rows in file)';
+    $('rowState').textContent=Object.keys(pending).length ? 'new edits pending' : 'saved';
+    $('savedCount').textContent=data.rows;
+  } catch(error){
+    $('exportMsg').textContent='save failed: '+error.message;
+    $('rowState').textContent='not saved';
+  } finally {
+    saveInFlight=false; $('exportBtn').disabled=false;
+    updateSaveBtn();
   }
-  $('exportMsg').textContent = data.saved
-     ? 'saved \u2192 '+data.saved+' ('+data.rows+' rows in file)'
-     : 'save failed';
-  $('rowState').textContent = 'saved';
-  $('savedCount').textContent = data.rows;
-  renderRowPreview();
 };
 
 document.addEventListener('keydown', e=>{
