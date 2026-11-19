@@ -920,9 +920,15 @@ One process at a time may write apply's, the ledger's or reconcile's output fold
 
 ## Measured on real data
 
-### The first-training job, run locally on 5 packs (19 Nov)
+### The first-training job on all 38 packs (19 Nov)
 
-`teams/01-data-a/jobs/logs/2026-11-19-first-training-local-5packs/README.md` (aneeshads, at `9965416` with the `4dd2802` fix): the job's own script on 13 raw parts of sample v0 (8 train, 5 held-out) of `ind-sa-fw2`, `ind-hi-fw2`, `en-fineweb-edu`, `code-go` and `code-rust`, with H3 on LaBSE (2,000 documents a pack). Every stage from clean to reconcile ran: **118 checks, 0 failed**; 237,898 raw → 228,313 cleaned → 227,984 kept (dedup 83, F2 246); 8 train parts → **63 shards** (`tokens` 2^22, so that parts roll over), 0 truncated, verified on disk; reconcile: 225,471 in shards + 199 left out (secret) + 2,314 held-out. Not a production run: no inventory, a test tokenizer (`dataset_version` `test`), and not all 38 packs.
+`teams/01-data-a/jobs/logs/2026-11-19-first-training-rehearsal-38packs/` (#62; sourav-dhar, on a Runpod A100 pod with 32 vCPU, Linux, the job's pinned environment): all 86 raw parts of sample v0 (38 packs, 1,444,766 documents), the frozen p1536, H3 report-only with the job's `h3.json`.
+
+- **First run** (`4dd2802`, a rehearsal config): **59 checks, 0 failed**, 2 h 35 min. 1,444,766 raw → 1,410,230 cleaned → 1,407,358 kept (dedup 1,339 in 1,083 groups, 0 held-out; F2 1,533); 48 train parts → **48 shards** (1,132,509,915 tokens), verified on disk; reconcile: 1,385,709 in shards + 7,575 left out + 14,074 held-out. Peak memory: overlap 14.0 GB, shards 18.8 GB, each in one process.
+- **Run with the inventory** (`2691c44`, `prepare_run.py`'s own `run.json` with F2 at 30 workers): **74 checks, 0 failed**, the inventory checks passing before shards and after reconcile; the same counts, and all 144 shard data files byte-identical to the first run.
+- Plus four shard drills on a 3-pack run (rollover, a killed and rerun shard stage, damaged shards, a part left out whole).
+
+An earlier local run on 5 of the packs (aneeshads, 118 checks, 0 failed) is superseded by these and was removed from the branch; it stays in the history at `4dd2802`.
 
 ### The rehearsal from raw (16 Nov)
 
