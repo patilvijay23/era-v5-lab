@@ -35,7 +35,10 @@ CONFIG (JSON; keys starting with "_" are comments)
   out         the output folder, inside out/
   pairs       the language pairs, e.g. [["sa", "en"], ["sa", "hi"], ["hi", "en"], ["or", "en"]]
   bands       coverage band edges, e.g. [0.3, 0.45, 0.6, 0.75, 1.0]: the bands either side of the 0.6 threshold
-  per_band, n_controls, readers, seed, sentence_min_chars, max_sentences
+  per_band    pairs drawn per band; one count for every language pair, or a {language pair: count} map that names
+              each pair (either order), e.g. {"sa-en": 20, "sa-hi": 20, "hi-en": 10, "or-en": 10}
+  n_controls  controls per language pair; one count, or a map as for per_band
+  readers, seed, sentence_min_chars, max_sentences
 
 WHAT IT WRITES (in out)
 =======================
@@ -169,13 +172,31 @@ def load_config(path):
     if (not isinstance(b, list) or len(b) < 2 or not all(number(x) and 0 <= x <= 1 for x in b)
             or not all(np.diff(np.asarray(b, dtype=np.float64)) > 0)):
         sys.exit("ERROR: bands must be at least two increasing coverage values between 0 and 1")
-    for name in ("per_band", "readers", "max_sentences"):
+    for name in ("readers", "max_sentences"):
         if type(cfg[name]) is not int or cfg[name] <= 0:
             sys.exit(f"ERROR: {name} must be a positive integer")
-    for name in ("n_controls", "sentence_min_chars", "seed"):
+    for name in ("sentence_min_chars", "seed"):
         if type(cfg[name]) is not int or cfg[name] < 0:
             sys.exit(f"ERROR: {name} must be a nonnegative integer")
+    names = {**{f"{b}-{a}": f"{a}-{b}" for a, b in pairs}, **{f"{a}-{b}": f"{a}-{b}" for a, b in pairs}}
+    for name, low in (("per_band", 1), ("n_controls", 0)):     # one count, or one per language pair
+        value = cfg[name]
+        if isinstance(value, dict):
+            named = [names.get(k) for k in value]
+            if None in named or len(set(named)) != len(named) or set(named) != set(names.values()):
+                sys.exit(f"ERROR: a {name} map must name each language pair of pairs once (either order): "
+                         f"{sorted(set(names.values()))}")
+            cfg[name] = {names[k]: v for k, v in value.items()}
+        if not all(type(v) is int and v >= low for v in (cfg[name].values() if isinstance(cfg[name], dict)
+                                                          else [cfg[name]])):
+            sys.exit(f"ERROR: {name} must be {'a positive' if low else 'a nonnegative'} integer, or a map of them")
     return cfg
+
+
+def count(cfg, name, pair):
+    """per_band or n_controls for one language pair."""
+    value = cfg[name]
+    return value[pair] if isinstance(value, dict) else value
 
 
 def load_run(encoder, folder, pairs):
@@ -232,7 +253,7 @@ def sample(runs, cfg, names, rng):
         encs = [e for e, r in enumerate(runs) if (r["pair"] == k).any()]
         if not encs:
             continue
-        per = -(-cfg["per_band"] // len(encs))
+        per = -(-count(cfg, "per_band", name) // len(encs))
         for b in range(last + 1):
             lo, hi = edges[b], edges[b + 1]
             for e in encs:
@@ -309,7 +330,7 @@ def candidate_items(runs, run_ix, row_ix, band_ix, cfg, names, parts):
 
 def control_items(cfg, names, rng):
     """n_controls pairs of known answer per language pair, from the controls file, and the counts."""
-    if not cfg["controls"] or not cfg["n_controls"]:
+    if not cfg["controls"] or not any(count(cfg, "n_controls", name) for name in names):
         return [], {}
     path = REPO / cfg["controls"]
     if not path.is_file():
@@ -327,8 +348,9 @@ def control_items(cfg, names, rng):
     pieces, counts = [], {}
     for k, name in enumerate(names):                              # the language pairs
         idx = np.flatnonzero(bools(pc.equal(pair, name)))
-        pick = np.sort(rng.choice(idx, size=min(cfg["n_controls"], len(idx)), replace=False)) if len(idx) else idx
-        counts[name] = {"available": len(idx), "drawn": len(pick), "wanted": cfg["n_controls"]}
+        want = count(cfg, "n_controls", name)
+        pick = np.sort(rng.choice(idx, size=min(want, len(idx)), replace=False)) if len(idx) else idx
+        counts[name] = {"available": len(idx), "drawn": len(pick), "wanted": want}
         if not len(pick):
             continue
         c = t.take(pa.array(pick, pa.int64()))
@@ -434,7 +456,7 @@ def main(argv=None):
                              "other_language_pairs_dropped": r["dropped"]} for r in runs},
         "strata": strata, "shortfalls": [s for s in strata if s["drawn"] < s["wanted"]],
         "controls": control_counts,
-        "controls_sha256": h3.sha256_file(REPO / cfg["controls"]) if cfg["controls"] and cfg["n_controls"] else None,
+        "controls_sha256": h3.sha256_file(REPO / cfg["controls"]) if control_counts else None,
         "items": items_total, "readers": cfg["readers"],
         "outputs": {str(p.relative_to(out)): h3.sha256_file(p) for p in outputs},
         "stages_seconds": seconds, "wall_seconds": round(time.perf_counter() - t0, 2),
