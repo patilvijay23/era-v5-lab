@@ -63,7 +63,10 @@ def build_inputs(root):
     return docs
 
 
-def write_run(root, name, docs, pairs, reverse_docs=False, status="complete"):
+SCORED = {"sentence_min_chars": 20, "max_sentences": 16}   # h3.py's defaults
+
+
+def write_run(root, name, docs, pairs, reverse_docs=False, status="complete", sentences=SCORED):
     """An h3.py output folder: docs (in reverse order if reverse_docs) and pairs [(lang_a, d_a, lang_b, d_b, cov)]."""
     folder = root / "out" / "runs" / name
     folder.mkdir(parents=True, exist_ok=True)
@@ -88,7 +91,8 @@ def write_run(root, name, docs, pairs, reverse_docs=False, status="complete"):
         "length_ratio": [1.1] * len(pairs), "numbers_jaccard": [0.5] * len(pairs), "latin_share": [None] * len(pairs),
         "sentences_a": [5] * len(pairs), "sentences_b": [5] * len(pairs), "aligned": [round(c * 5) for c in cov],
         "coverage": cov, "mean_sentence_cosine": [0.8] * len(pairs), "qualifies": [c >= 0.6 for c in cov]})
-    (folder / "h3_summary.json").write_text(json.dumps({"status": status}), encoding="utf-8")
+    summary = {"status": status, "config": {"top_k": 3, **sentences}} if sentences is not None else {"status": status}
+    (folder / "h3_summary.json").write_text(json.dumps(summary), encoding="utf-8")
     return folder
 
 
@@ -273,6 +277,40 @@ def test_documents_that_changed_since_the_run_stop_it(tmp_path, monkeypatch):
         run(path)
 
 
+def test_sentences_are_split_as_the_runs_split_them(tmp_path, monkeypatch):
+    path, docs = setup(tmp_path, monkeypatch, per_band=50)
+    short = {"sentence_min_chars": 20, "max_sentences": 3}
+    labse = [("sa", d, "en", d, COV[d]) for d in range(N)]
+    write_run(tmp_path, "labse", docs, labse, sentences=short)
+    write_run(tmp_path, "bge", docs, labse, reverse_docs=True, sentences=short)
+    run(path)
+    text = {x["doc_id"]: x["text"] for x in docs}
+    key = {x["item"]: x for x in key_rows(tmp_path, "sa-en")}
+    rows = [x for x in read(tmp_path / "out/e5d/sheets/sa-en_reader1.csv") if key[x["item"]]["source"] == "candidate"]
+    assert rows
+    for row in rows:
+        k = key[row["item"]]
+        a, b = (split_sentences(text[k[f"doc_id_{s}"]], 20, 3) for s in "ab")
+        assert {row["text_1"], row["text_2"]} == {"\n".join(a), "\n".join(b)}
+    summary = json.loads((tmp_path / "out/e5d/e5d_summary.json").read_text())
+    assert summary["sentence_settings"] == short
+
+
+def test_runs_that_split_sentences_differently_are_refused(tmp_path, monkeypatch):
+    path, docs = setup(tmp_path, monkeypatch)
+    write_run(tmp_path, "bge", docs, [("en", 0, "sa", 0, 0.9)], sentences={"sentence_min_chars": 20,
+                                                                            "max_sentences": 8})
+    with pytest.raises(SystemExit, match="split sentences differently"):
+        run(path)
+
+
+def test_a_run_without_its_sentence_settings_is_refused(tmp_path, monkeypatch):
+    path, docs = setup(tmp_path, monkeypatch)
+    write_run(tmp_path, "labse", docs, [("sa", 0, "en", 0, 0.9)], sentences=None)
+    with pytest.raises(SystemExit, match="does not record h3.py's sentence_min_chars and max_sentences"):
+        run(path)
+
+
 def test_an_incomplete_run_is_refused(tmp_path, monkeypatch):
     path, docs = setup(tmp_path, monkeypatch)
     write_run(tmp_path, "labse", docs, [("sa", 0, "en", 0, 0.9)], status="stopped_time_limit")
@@ -291,6 +329,7 @@ def test_an_incomplete_run_is_refused(tmp_path, monkeypatch):
     ({"per_band": {"sa-en": 4, "en-sa": 4, "hi-en": 2}}, "map must name each language pair"),
     ({"per_band": {"sa-en": 4, "hi-en": 0}}, "per_band must be a positive integer, or a map"),
     ({"n_controls": {"sa-en": -1, "hi-en": 1}}, "n_controls must be a nonnegative integer, or a map"),
+    ({"max_sentences": 16}, "unknown keys"),                     # taken from the runs, never the sheet config
     ({"surprise": 1}, "unknown keys")])
 def test_bad_configs_are_refused(tmp_path, monkeypatch, change, message):
     path, _ = setup(tmp_path, monkeypatch, **change)

@@ -19,7 +19,9 @@ build   --flores-dir holds, for eng_Latn, hin_Deva, san_Deva and ory_Orya, eithe
         devtest order, as labse_check.py reads it) or FLORES+'s devtest/<code>.jsonl (as `hf download` saves
         openlanguagedata/flores_plus; sentences put in the order of their id). Their sha256 go in flores_build.json:
         G9 pins revision e707e62e of FLORES+ with each file's sha256 (teams/09-evaluation/fingerprints/v1/flores200/
-        MANIFEST.json). Every block of --block consecutive sentences becomes
+        MANIFEST.json). Every language must hold the same sentence ids (FLORES+'s id, or a .txt file's line
+        numbers), so that sentence k is the same sentence in every language. Every block of --block consecutive
+        sentences becomes
         one document, one pack per language (flores-en, flores-hi, flores-sa, flores-or), in h3.py's raw layout
         (<pack>/Part_1/, <pack>/Heldout/; every fourth English block is held out). Block i is the same text in every
         language, so (block i, block i) of two languages is a translation and (block i, block j) a same-domain
@@ -29,8 +31,10 @@ check   reads the sheets and the key that h3_e5d_sheets.py wrote. A candidate is
         documents are the same block. It counts, per language pair and band, the translations and non-translations
         drawn, and on each side of --threshold the translations the threshold misses and the non-translations it
         lets through. It also checks that the sheets are blind (only item, text_1, text_2, translation, note; no doc_id
-        in a text) and match the key item for item, and that every control is a non-translation. Writes
-        flores_check.json and flores_truth.csv (item and answer, no text); exits 1 if a check fails.
+        in a text) and match the key item for item; that each sheet's text_1 and text_2 are the key's sentences
+        (key/sentences.parquet) on the sides the key names (text_1_side); that translation and note are empty; and
+        that every control is a non-translation. Writes flores_check.json and flores_truth.csv (item and answer, no
+        text); exits 1 if a check fails.
 """
 import sys
 sys.dont_write_bytecode = True
@@ -70,12 +74,13 @@ def blocks(lines, block, n):
 
 
 def sentences(flores_dir, code):
-    """(the language's devtest sentences in devtest order, the file read, its bytes): <code>.txt, one sentence per
-    line, or FLORES+'s devtest/<code>.jsonl, one record per sentence, put in the order of its id."""
+    """(the language's devtest sentences and their ids, in id order, the file read, its bytes): <code>.txt, one
+    sentence per line (the id is the line number), or FLORES+'s devtest/<code>.jsonl, one record per sentence."""
     txt, jsonl = flores_dir / f"{code}.txt", flores_dir / "devtest" / f"{code}.jsonl"
     if txt.is_file():
         data = txt.read_bytes()
-        return pa.array(data.decode("utf-8").splitlines(), pa.string()), txt, data
+        lines = pa.array(data.decode("utf-8").splitlines(), pa.string())
+        return lines, pa.array(np.arange(len(lines), dtype=np.int64)), txt, data
     if jsonl.is_file():
         data = jsonl.read_bytes()
         t = pajson.read_json(pa.BufferReader(data), parse_options=pajson.ParseOptions(
@@ -84,19 +89,25 @@ def sentences(flores_dir, code):
         ids = t.column("id").combine_chunks()
         if pc.count_distinct(ids).as_py() != t.num_rows or ids.null_count:
             sys.exit(f"ERROR: {jsonl}: every record needs a distinct id")
-        return t.column("text").combine_chunks().take(pc.sort_indices(ids)), jsonl, data
+        order = pc.sort_indices(ids)
+        return t.column("text").combine_chunks().take(order), ids.take(order), jsonl, data
     sys.exit(f"ERROR: --flores-dir {flores_dir} has neither {code}.txt nor devtest/{code}.jsonl")
 
 
 def build(flores_dir, out, block):
-    lines, digests = {}, {}
+    lines, ids, digests = {}, {}, {}
     for lang, code in LANGS.items():                              # the four languages
-        text, path, data = sentences(flores_dir, code)
+        text, sid, path, data = sentences(flores_dir, code)
         digests[path.name] = sha256(data)
-        lines[lang] = pc.utf8_trim_whitespace(pc.fill_null(text, ""))
+        lines[lang], ids[lang] = pc.utf8_trim_whitespace(pc.fill_null(text, "")), sid
     sizes = {lang: len(v) for lang, v in lines.items()}
     if len(set(sizes.values())) != 1:
         sys.exit(f"ERROR: the FLORES files must have the same number of lines (one sentence each), not {sizes}")
+    first = next(iter(ids))
+    for lang, sid in ids.items():                                 # the four languages
+        if not pc.all(pc.equal(sid, ids[first])).as_py():
+            sys.exit(f"ERROR: {LANGS[lang]} and {LANGS[first]} hold different sentence ids; every language must hold "
+                     f"the same sentences, so that block i is the same text in each")
     n = next(iter(sizes.values())) // block
     if n < 2:
         sys.exit(f"ERROR: at least two blocks of {block} sentences are needed")
@@ -148,11 +159,40 @@ def sorted_items(table):
     return items.take(pc.sort_indices(items))
 
 
+def flags(x):
+    return np.asarray(pc.fill_null(x, False).to_numpy(zero_copy_only=False), bool)
+
+
+def shown_texts(sheets):
+    """(item + tab + side, the sentences shown on that side, one per line) from key/sentences.parquet, or None."""
+    path = sheets / "key" / "sentences.parquet"
+    if not path.is_file():
+        return None
+    t = pq.read_table(path)
+    return (pc.binary_join_element_wise(strings(t, "item"), strings(t, "side"), "\t"),
+            pc.binary_join(strings(t, "sentences"), "\n"))
+
+
+def wrong_texts(sheet, key, shown):
+    """How many rows of a sheet do not show the key's sentences on the sides the key names."""
+    items = strings(sheet, "item")
+    side_1 = strings(key, "text_1_side").take(pc.index_in(items, value_set=strings(key, "item")))
+    side_2 = pc.if_else(pc.equal(side_1, "a"), pa.scalar("b"), pa.scalar("a"))
+    ok = np.ones(sheet.num_rows, bool)
+    for col, side in (("text_1", side_1), ("text_2", side_2)):    # the two texts of each row
+        want = shown[1].take(pc.index_in(pc.binary_join_element_wise(items, side, "\t"), value_set=shown[0]))
+        ok &= flags(pc.equal(pc.fill_null(strings(sheet, col), ""), want))
+    return int((~ok).sum())
+
+
 def check(sheets, out, threshold):
     keys = sorted((sheets / "key").glob("*_key.csv"))
     if not keys:
         sys.exit(f"ERROR: no key files in {sheets / 'key'}")
     failures, pairs, truth_items, truth_values = [], {}, [], []
+    shown = shown_texts(sheets)
+    if shown is None:
+        failures.append("no key/sentences.parquet: the sheets' texts cannot be checked")
     for path in keys:                                             # the language pairs
         name = path.name[:-len("_key.csv")]
         key = read_csv(path)
@@ -197,6 +237,14 @@ def check(sheets, out, threshold):
             text = pc.binary_join_element_wise(strings(sheet, "text_1"), strings(sheet, "text_2"), "\n")
             if pc.any(pc.match_substring_regex(text, DOC_ID)).as_py():          # FLORES doc_ids are block-NNN
                 failures.append(f"{sp.name}: a text holds a doc_id")
+            if "text_1_side" not in key.column_names:
+                failures.append(f"{path.name}: no text_1_side column")
+            elif shown is not None and (bad := wrong_texts(sheet, key, shown)):
+                failures.append(f"{sp.name}: {bad} rows do not show the key's sentences on the key's sides")
+            filled = sum(int(flags(pc.not_equal(pc.fill_null(strings(sheet, c), ""), "")).sum())
+                         for c in ("translation", "note"))
+            if filled:
+                failures.append(f"{sp.name}: {filled} answer cells are filled in")
         truth_items.append(item)
         truth_values.append(pa.array(np.where(cand, np.where(same, "yes", "no"), "no")))
     pacsv.write_csv(pa.table({"item": pa.concat_arrays(truth_items),

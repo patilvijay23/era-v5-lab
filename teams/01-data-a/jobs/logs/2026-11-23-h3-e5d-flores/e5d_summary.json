@@ -36,9 +36,7 @@
     "per_band": 20,
     "n_controls": 10,
     "readers": 2,
-    "seed": 20261122,
-    "sentence_min_chars": 20,
-    "max_sentences": 16
+    "seed": 20261122
   },
   "runs": {
     "labse": {
@@ -376,6 +374,10 @@
     "or-en": 30
   },
   "readers": 2,
+  "sentence_settings": {
+    "sentence_min_chars": 20,
+    "max_sentences": 16
+  },
   "outputs": {
     "key/hi-en_key.csv": "8887c26ce40e28b5c0475c17803a3a564d925b7937ebcee32f91a7a72b361b28",
     "key/or-en_key.csv": "68b5edc04c947c634d632631475779c3239cba323a77f080c2e7b3c6955f7142",

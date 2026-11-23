@@ -90,6 +90,19 @@ def test_build_reads_flores_plus_jsonl_in_id_order(tmp_path, monkeypatch):
     assert set(summary["flores_sha256"]) == {f"{c}.jsonl" for c in flores.LANGS.values()}
 
 
+def test_languages_with_different_sentence_ids_are_refused(tmp_path, monkeypatch):
+    monkeypatch.setattr(flores, "REPO", tmp_path)
+    d = tmp_path / "flores_plus" / "devtest"
+    d.mkdir(parents=True)
+    for lang, code in flores.LANGS.items():                       # as many records everywhere; Odia's ids are shifted
+        ids = range(1, LINES + 1) if lang == "or" else range(LINES)
+        (d / f"{code}.jsonl").write_text("".join(
+            json.dumps({"id": i, "text": WORDS[lang].format(i=i)}, ensure_ascii=False) + "\n" for i in ids),
+            encoding="utf-8")
+    with pytest.raises(SystemExit, match="ory_Orya and eng_Latn hold different sentence ids"):
+        flores.main(["build", "--flores-dir", str(tmp_path / "flores_plus"), "--out", "out/fl"])
+
+
 def test_a_missing_language_is_refused(tmp_path, monkeypatch):
     monkeypatch.setattr(flores, "REPO", tmp_path)
     d = flores_dir(tmp_path)
@@ -98,24 +111,31 @@ def test_a_missing_language_is_refused(tmp_path, monkeypatch):
         flores.main(["build", "--flores-dir", str(d), "--out", "out/fl"])
 
 
-def write_sheets(root, key, sheet_rows, columns=None):
-    (root / "key").mkdir(parents=True)
-    (root / "sheets").mkdir(parents=True)
-    pacsv.write_csv(pa.table(key), root / "key/sa-en_key.csv")
-    for r in (1, 2):
-        t = pa.table(sheet_rows) if columns is None else pa.table(columns)
-        pacsv.write_csv(t, root / "sheets" / f"sa-en_reader{r}.csv")
-
-
 KEY = {"item": ["sa-en-001", "sa-en-002", "sa-en-003", "sa-en-004"],
        "source": ["candidate", "candidate", "candidate", "control"],
        "band": ["0.75-1.00", "0.30-0.45", "0.60-0.75", "control"],
        "drawn_for": ["labse", "labse", "labse", None], "expected": [None, None, None, "no"],
+       "text_1_side": ["b", "a", "a", "b"],
        "doc_id_a": ["block-001", "block-002", "block-003", None],
        "doc_id_b": ["block-001", "block-002", "block-004", None],
        "coverage_labse": [0.8, 0.4, 0.7, None]}
+SENTENCES = {"item": ["sa-en-001", "sa-en-001", "sa-en-002", "sa-en-002", "sa-en-003", "sa-en-003", "sa-en-004",
+                      "sa-en-004"],
+             "side": ["a", "b"] * 4,
+             "sentences": [["g"], ["c"], ["e"], ["i"], ["a", "b"], ["f"], ["h"], ["d"]]}
 SHEET = {"item": ["sa-en-003", "sa-en-001", "sa-en-004", "sa-en-002"], "text_1": ["a\nb", "c", "d", "e"],
          "text_2": ["f", "g", "h", "i"], "translation": [""] * 4, "note": [""] * 4}
+
+
+def write_sheets(root, key, sheet_rows, columns=None, sentences=SENTENCES):
+    (root / "key").mkdir(parents=True)
+    (root / "sheets").mkdir(parents=True)
+    pacsv.write_csv(pa.table(key), root / "key/sa-en_key.csv")
+    if sentences is not None:
+        pq.write_table(pa.table(sentences), root / "key/sentences.parquet")
+    for r in (1, 2):
+        t = pa.table(sheet_rows) if columns is None else pa.table(columns)
+        pacsv.write_csv(t, root / "sheets" / f"sa-en_reader{r}.csv")
 
 
 def test_check_counts_misses_and_false_matches(tmp_path, monkeypatch):
@@ -135,13 +155,26 @@ def test_check_counts_misses_and_false_matches(tmp_path, monkeypatch):
 @pytest.mark.parametrize("sheet, columns, message", [
     ({**SHEET, "text_1": ["block-002 leaked", "c", "d", "e"]}, None, "holds a doc_id"),
     (None, {**SHEET, "coverage": [0.1] * 4}, "columns"),
-    ({**SHEET, "item": ["sa-en-003", "sa-en-001", "sa-en-004", "sa-en-009"]}, None, "items differ")])
+    ({**SHEET, "item": ["sa-en-003", "sa-en-001", "sa-en-004", "sa-en-009"]}, None, "items differ"),
+    ({**SHEET, "text_2": ["f", "g", "h", "wrong"]}, None, "1 rows do not show the key's sentences"),
+    ({**SHEET, "text_1": ["f", "c", "d", "e"], "text_2": ["a\nb", "g", "h", "i"]}, None,   # sides swapped
+     "1 rows do not show the key's sentences on the key's sides"),
+    ({**SHEET, "translation": ["yes", "", "", ""]}, None, "1 answer cells are filled in"),
+    ({**SHEET, "note": ["", "", "seen it", ""]}, None, "1 answer cells are filled in")])
 def test_check_fails_on_a_sheet_that_is_not_blind_or_not_the_keys(tmp_path, monkeypatch, sheet, columns, message):
     monkeypatch.setattr(flores, "REPO", tmp_path)
     write_sheets(tmp_path / "out/s", KEY, sheet, columns)
     assert flores.main(["check", "--sheets", "out/s", "--out", "out/fl"]) == 1
     result = json.loads((tmp_path / "out/fl/flores_check.json").read_text())
     assert result["status"] == "fail" and any(message in f for f in result["failures"])
+
+
+def test_check_fails_without_the_shown_sentences(tmp_path, monkeypatch):
+    monkeypatch.setattr(flores, "REPO", tmp_path)
+    write_sheets(tmp_path / "out/s", KEY, SHEET, sentences=None)
+    assert flores.main(["check", "--sheets", "out/s", "--out", "out/fl"]) == 1
+    result = json.loads((tmp_path / "out/fl/flores_check.json").read_text())
+    assert any("no key/sentences.parquet" in f for f in result["failures"])
 
 
 def test_end_to_end_with_the_sheet_generator(tmp_path, monkeypatch):
@@ -181,7 +214,8 @@ def test_end_to_end_with_the_sheet_generator(tmp_path, monkeypatch):
         "numbers_jaccard": [None] * n, "latin_share": [None] * n, "sentences_a": [8] * n, "sentences_b": [8] * n,
         "aligned": [round(8 * p[4]) for p in pairs], "coverage": [p[4] for p in pairs],
         "mean_sentence_cosine": [0.8] * n, "qualifies": [p[4] >= 0.6 for p in pairs]})
-    (run / "h3_summary.json").write_text(json.dumps({"status": "complete"}))
+    (run / "h3_summary.json").write_text(json.dumps({"status": "complete", "config": {"sentence_min_chars": 20,
+                                                                                       "max_sentences": 16}}))
     cfg = tmp_path / "sheets.json"
     cfg.write_text(json.dumps({"runs": {"labse": "out/fl/h3_fake"}, "inputs": "out/fl/inputs",
                                "controls": "out/fl/controls.parquet", "out": "out/fl/sheets",
