@@ -44,7 +44,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from dataio.loader import Loader  # noqa: E402
-from dataio.tokenizer import REVISION as TOKENIZER_REVISION, SHA256 as TOKENIZER_SHA256, VOCAB_SIZE as BRAHMIC_VOCAB  # noqa: E402
+from dataio.tokenizer import (NAME as TOKENIZER_NAME, REVISION as TOKENIZER_REVISION,  # noqa: E402
+                             SHA256 as TOKENIZER_SHA256, VOCAB_SIZE as BRAHMIC_VOCAB)
 from models.config import load_config, model_config  # noqa: E402
 from kernels.layer_norm import layer_norm_backend_report  # noqa: E402
 from models.gpt import GPT  # noqa: E402
@@ -559,7 +560,7 @@ def run_metadata(s: Setup, config_file: str, overrides: list, tag: str,
         "dtype": s.dtype, "dtype_requested": s.cfg["run"]["dtype"], "notes": list(s.notes),
         "batch_size": s.loader.B, "seq_len": s.loader.T, "tokens_per_step": s.loader.B * s.loader.T,
         "vocab_size": s.mcfg.vocab_size, "data_source": s.cfg["data"]["source"],
-        "tokenizer": {"name": "BrahmicTokenizer-131K", "revision": TOKENIZER_REVISION, "sha256": TOKENIZER_SHA256,
+        "tokenizer": {"name": TOKENIZER_NAME, "revision": TOKENIZER_REVISION, "sha256": TOKENIZER_SHA256,
                       "vocab_size": s.loader.vocab_size},
         "lr_schedule": s.cfg["optim"]["schedule"],
         "layer_norm": {"requested": s.mcfg.ln_impl, "modules": layer_norm_backend_report(s.core)},
@@ -691,7 +692,12 @@ def quick_compare(a: dict, b: dict, tol_pct: float, gate_level: int, abs_tol_ms:
         if va != vb:
             problems.append(f"different {section} config" if key is None else
                             f"different {section}.{key}: {va} vs {vb}")
-    pairs = [("step (clean)", a["clean"]["step_ms"]["median"], b["clean"]["step_ms"]["median"])]
+    # Default true: Gate-2 / --repeat still gate clean step. Job may set report.compare_clean_step=false
+    # so a layer-only --against run does not dual-gate cold clean under lab SwPowerCap (Choice A+).
+    pairs = []
+    rep = (a.get("config") or {}).get("report") or {}
+    if rep.get("compare_clean_step", True):
+        pairs.append(("step (clean)", a["clean"]["step_ms"]["median"], b["clean"]["step_ms"]["median"]))
     ra, rb = (a.get("layer") or {}).get("regions", {}), (b.get("layer") or {}).get("regions", {})
     gated = [n for n, r in ra.items() if r["level"] <= gate_level]
     gated += [n for n, r in rb.items() if r["level"] <= gate_level and n not in ra]     # a part only b has

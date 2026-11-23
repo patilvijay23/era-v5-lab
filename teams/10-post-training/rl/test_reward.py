@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -36,6 +37,23 @@ def _has_image(image: str) -> bool:
     return subprocess.run(["docker", "image", "inspect", image], capture_output=True).returncode == 0
 
 
+needs_go_image = pytest.mark.skipif(
+    not _has_image(os.environ.get("G10_GO_IMAGE", "g10-go-rl:1")), reason="docker or the g10-go-rl:1 image is missing")
+needs_js_image = pytest.mark.skipif(
+    not _has_image(os.environ.get("G10_JS_IMAGE", "g10-js-rl:1")), reason="docker or the g10-js-rl:1 image is missing")
+
+
+def _node_v26_ready() -> bool:
+    if not shutil.which("node"):
+        return False
+    try:
+        out = subprocess.run(["node", "--version"], capture_output=True, text=True, timeout=5).stdout.strip()
+        return int(out.lstrip("v").split(".")[0]) >= 26
+    except Exception:
+        return False
+
+
+needs_node_v26 = pytest.mark.skipif(not _node_v26_ready(), reason="node 26+ is not available")
 needs_code_image = pytest.mark.skipif(not _has_image(pool.CODE_IMAGE), reason="docker or python:3.12-slim missing")
 SWE_ENV = "python-validators__validators-191"
 needs_swe_image = pytest.mark.skipif(not _has_image(f"g10-swe/{SWE_ENV}:v1"), reason="SWE env image missing")
@@ -104,9 +122,60 @@ def test_list_envs_covers_every_shipped_task_and_env():
     ids = reward.list_envs()
     assert len([i for i in ids if i.startswith("code/")]) == len(list((HERE / "tasks").glob("*/task.json")))
     assert len([i for i in ids if i.startswith("swe/")]) == len(list((HERE.parent / "swe-envs").glob("*/env.json")))
+    assert len([i for i in ids if i.startswith("indic/")]) == len(list((HERE / "indic" / "tasks").glob("*/task.json")))
+    assert len([i for i in ids if i.startswith("go/")]) == len(list((HERE / "go" / "tasks").glob("*/task.json")))
+    assert len([i for i in ids if i.startswith("agentic/")]) == len(list((HERE / "agentic" / "tasks").glob("*/task.json")))
+    assert len([i for i in ids if i.startswith("js/")]) == (len(list((HERE / "jsts" / "tasks" / "js").glob("*/task.json")))
+                                                           + len(list((HERE / "js" / "tasks").glob("*/task.json"))))
+    assert len([i for i in ids if i.startswith("ts/")]) == len(list((HERE / "jsts" / "tasks" / "ts").glob("*/task.json")))
+    assert len([i for i in ids if i.startswith("math_pool/")]) == len(list((HERE / "math_pool" / "tasks").glob("*/task.json")))
     for i in ids:
+        if i.startswith("math_pool/") and not os.environ.get("G10_MATH_POOL"):
+            continue  # a math task's reference answer lives in the pool (rl/math_pool/README.md)
         good, bad = reward.known_outputs(i)
         assert good and bad and good != bad
+
+
+def test_indic_envs_score_the_known_good_one_and_the_known_bad_zero_without_docker():
+    ids = [i for i in reward.list_envs() if i.startswith("indic/")]
+    assert ids
+    rows = reward.check_all(workers=2, ids=ids)
+    assert len(rows) == 2 * len(ids) and all(r["ok"] for r in rows), [r for r in rows if not r["ok"]]
+    with pytest.raises(KeyError):
+        reward.reward("indic/no_such_task", "<answer>1</answer>")
+
+
+def test_go_is_registered_and_an_unknown_go_task_is_a_key_error():
+    assert "go" in reward._REGISTRY
+    assert [i for i in reward.list_envs() if i.startswith("go/")]
+    with pytest.raises(KeyError):
+        reward.reward("go/no_such_task", "```go\npackage main\n```")
+    with pytest.raises(KeyError):
+        reward.reward("go/../x", "x")
+
+
+def test_go_checker_passes_the_sandbox_through_and_defaults_to_docker(monkeypatch):
+    seen = []
+    monkeypatch.setattr(reward._go(), "reward", lambda task_dir, out, sandbox: seen.append(sandbox) or {"reward": 1})
+    name = next(i for i in reward.list_envs() if i.startswith("go/"))
+    assert reward.reward(name, "x")[0] == 1.0
+    runner = lambda work, t: None  # noqa: E731
+    reward.reward(name, "x", sandbox=runner)
+    assert seen == ["docker", runner]
+
+
+def test_go_known_bad_output_has_the_reference_signature_and_no_reference_body():
+    for env_id in [i for i in reward.list_envs() if i.startswith("go/")]:
+        good, bad = reward.known_outputs(env_id)
+        assert bad.startswith("```go\npackage main\n\nfunc ") and 'panic("stub")' in bad
+        assert bad.count("\n") < 10 < good.count("\n")
+
+
+@needs_go_image
+def test_go_envs_score_the_known_good_one_and_the_known_bad_zero_in_docker():
+    ids = [i for i in reward.list_envs() if i.startswith("go/")]
+    rows = reward.check_all(workers=4, ids=ids)
+    assert len(rows) == 2 * len(ids) and all(r["ok"] for r in rows), [r for r in rows if not r["ok"]]
 
 
 def test_swe_integrity_checks_hold_with_any_executor(monkeypatch):
@@ -267,3 +336,85 @@ def test_pool_does_not_follow_a_replaced_slot_folder(monkeypatch, tmp_path):
         worker.close()
     assert err == "result file is not a regular file or is too large"
     assert not (work / "results.json").exists()
+
+
+def test_pool_module_loads_once_and_whole_when_many_threads_ask_at_once():
+    import threading  # noqa: PLC0415
+
+    fresh = _load("g10_rl_reward_threads", HERE / "reward.py")  # its _POOL_MODULE is still None
+    start, got = threading.Barrier(16), []
+
+    def ask():
+        start.wait()
+        m = fresh._pool()
+        got.append((m, callable(getattr(m, "verifier_module", None))))  # what this thread sees when it gets it
+
+    threads = [threading.Thread(target=ask) for _ in range(16)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert len(got) == 16 and len({id(m) for m, _ in got}) == 1
+    assert all(whole for _, whole in got)  # no thread was handed a half-run module
+
+
+def test_check_all_skips_math_pool_without_pool(monkeypatch, capsys):
+    """A plain clone has no math pool: math ids are reported as skipped and the other sets are still checked."""
+    monkeypatch.delenv("G10_MATH_POOL", raising=False)
+    math_ids = [i for i in reward.list_envs() if i.startswith("math_pool/")]
+    indic_ids = [i for i in reward.list_envs() if i.startswith("indic/")][:1]
+    assert math_ids and indic_ids
+    rows = reward.check_all(workers=2, ids=math_ids[:1] + indic_ids)
+    by_type = {r["env_id"].split("/")[0]: r for r in rows}
+    assert by_type["math_pool"]["skipped"] is True and by_type["math_pool"]["score"] is None
+    assert all(r["ok"] for r in rows) and not by_type["indic"].get("skipped")
+    assert reward.main(["--check-all", "--type", "math_pool"]) == 2
+    assert '"skipped": %d' % (2 * len(math_ids)) in capsys.readouterr().out
+
+
+# --- JS environments ----------------------------------------------------------------------------
+
+def test_js_is_registered_and_an_unknown_js_task_is_a_key_error():
+    assert "js" in reward._REGISTRY
+    assert [i for i in reward.list_envs() if i.startswith("js/")]
+    with pytest.raises(KeyError):
+        reward.reward("js/no_such_task", "```javascript\nfunction f(){}\n```")
+    with pytest.raises(KeyError):
+        reward.reward("js/../x", "x")
+
+
+def test_js_checker_passes_the_sandbox_through_and_defaults_to_docker(monkeypatch):
+    seen = []
+    monkeypatch.setattr(reward._js(), "reward", lambda task_dir, out, sandbox: seen.append(sandbox) or {"reward": 1})
+    name = "js/camel_to_snake"  # an rl/js task; the Exercism js ids are listed first once both sets share the type
+    assert reward.reward(name, "x")[0] == 1.0
+    runner = lambda work, t: None  # noqa: E731
+    reward.reward(name, "x", sandbox=runner)
+    assert seen == ["docker", runner]
+
+
+def test_js_known_outputs_are_well_formed():
+    for env_id in [i for i in reward.list_envs() if i.startswith("js/")]:
+        good, bad = reward.known_outputs(env_id)
+        assert "```javascript" in good and "```javascript" in bad
+        assert good != bad
+
+
+@needs_js_image
+def test_js_envs_score_the_known_good_one_and_the_known_bad_zero_in_docker():
+    ids = [i for i in reward.list_envs() if i.startswith("js/")]
+    rows = reward.check_all(workers=4, ids=ids)
+    assert len(rows) == 2 * len(ids) and all(r["ok"] for r in rows), [r for r in rows if not r["ok"]]
+
+
+@needs_node_v26
+def test_js_env_scores_known_good_and_bad_through_reward_entry_point_in_process_sandbox():
+    good, bad = reward.known_outputs("js/camel_to_snake")
+    score_good, info_good = reward.reward("js/camel_to_snake", good, sandbox="process")
+    score_bad, info_bad = reward.reward("js/camel_to_snake", bad, sandbox="process")
+    assert score_good == 1.0
+    assert score_bad == 0.0
+    assert info_good["env_id"] == "js/camel_to_snake"
+    assert info_bad["env_id"] == "js/camel_to_snake"
+    assert info_good["reward"] == score_good
+    assert info_bad["reward"] == score_bad
