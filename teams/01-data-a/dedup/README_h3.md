@@ -253,6 +253,38 @@ The full console log is `teams/01-data-a/jobs/logs/2026-11-23-h3-e5d-flores.txt`
 `teams/01-data-a/jobs/logs/2026-11-23-h3-e5d-flores/` holds the summaries of the build, both `h3.py` runs, the sheets and
 the check, and `flores_truth.csv` (each item's answer). They hold IDs and counts only, no FLORES text.
 
+### Controls for the Sanskrit sheets
+
+`h3_e5d_controls.py` writes the generator's controls file from the 433 `ind-sa-fw2` same-page pairs of the encoder
+checks (`known_pairs.parquet`, and each encoder's `pair_scores.csv`). A pair is a Sanskrit half and an English or Hindi
+half of one page. Per language pair (sa-en, sa-hi) the controls, all expected "no", are:
+
+- the pairs read by hand as not translations (both encoders score them at the cut);
+- then unread pairs, drawn at random (seeded), that are far below every real translation on both encoders: coverage
+  at sentence threshold 0.5 at most 0.5 with BGE-M3 (the 6 real translations: 0.857 and up) and below 0.3 with LaBSE
+  (theirs: 0.3 and up).
+
+The 6 real translations and the 2 `not_sanskrit` pairs are left out (`--positives` adds the real translations as "yes"
+controls). The unread controls are listed in `controls.json` for a person to check before the sheets go out.
+
+| Language pair | Read non-translations | Unread, low on both encoders (drawn / pool) | Controls |
+|---|---|---|---|
+| sa-en | 2 | 8 / 312 | 10 |
+| sa-hi | 1 | 9 / 65 | 10 |
+
+Command, from the repository root (Kunal Sinha's pairs and scores outside the repository); it took 0.66 s:
+
+```sh
+python3 -I teams/01-data-a/dedup/h3_e5d_controls.py --out out/e5d_controls --known-pairs ../known_pairs.parquet \
+    --real ../real_translations.csv --labse ../pair_scores_labse_bge_m3/labse_15nov/pair_scores.csv \
+    --bge ../pair_scores_labse_bge_m3/bge_m3_16nov/pair_scores.csv \
+    --not-translations fea1f4f3908e44b3 d0479a80829a2dc1 f4dd16e97e012036
+```
+
+The output is `teams/01-data-a/jobs/logs/2026-11-23-h3-e5d-controls.txt`, and `controls.json` (rule, inputs' sha256,
+counts, doc_ids) is in `teams/01-data-a/jobs/logs/2026-11-23-h3-e5d-controls/`. `controls.parquet` holds page text and
+stays in `out/`.
+
 ## Harm check with planted cases (task 3.5)
 
 The harm check runs the pipeline on the week-1 diagnosis packs (9 prose packs of 500 documents; 1,308 gold documents)
@@ -378,6 +410,22 @@ They check that a sheet has only its five columns and no doc_id, pack or score. 
 - the generator and the check work end to end without a model.
 
 Every text in them is made up.
+
+The controls for the Sanskrit sheets:
+
+```sh
+python3 -B -m pytest teams/01-data-a/dedup/tests/test_h3_e5d_controls.py -q -rs -p no:cacheprovider
+```
+
+```text
+...........                                                              [100%]
+11 passed in 2.30s
+```
+
+They check which pairs are taken (the read non-translations, then pairs low on both encoders; never a real translation
+or a `not_sanskrit` pair), `--positives`, the seed, a short pool reported, a summary with no text, that the sheet
+generator reads the file, and that mismatched score files, a pair missing from the known pairs, a pair listed as both a
+translation and not one, and an unknown ID are refused. The pairs, texts and scores are made up.
 
 The harm check with planted cases:
 
