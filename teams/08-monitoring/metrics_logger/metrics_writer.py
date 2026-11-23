@@ -85,6 +85,7 @@ METRICS = frozenset({
     "model_flops_utilization", "loader_wait_time",
     "gpu_temp_c", "gpu_thermal_throttle", "gpu_memory_used",
     "tokens_per_byte", "tokens_per_byte_by_lang",
+    "reward_per_env", "train_reward", "entropy", "mismatch_k3", "mismatch_abs_logratio",
 })
 
 # Names used by train.py that are written under a different name.
@@ -470,11 +471,14 @@ def step_with_update_weight_ratio(optimizer, step, every_n_steps=FLUSH_EVERY):
 
 
 class MetricsWriter:
-    def __init__(self, path, flush_every=FLUSH_EVERY):
+    def __init__(self, path, flush_every=FLUSH_EVERY, *, run_id=None):
         if flush_every < 1:
             raise ValueError("flush_every must be >= 1")
         self.path = path
+        if run_id is not None and (not isinstance(run_id, str) or not run_id.strip()):
+            raise ValueError("run_id must be a nonempty string")
         self.flush_every = flush_every
+        self.run_id = run_id
         self._buffer = []
         self._warned = set()
         directory = os.path.dirname(os.path.abspath(path))
@@ -542,6 +546,8 @@ class MetricsWriter:
             if imbalance is not None:
                 metrics["expert_load_imbalance"] = imbalance
         row = {"step": step, "time": time.time()}
+        if self.run_id is not None:
+            row["run_id"] = self.run_id
         nonfinite = False
         for name, value in metrics.items():
             # Plain JSON has no NaN/Infinity; store null and flush now.
