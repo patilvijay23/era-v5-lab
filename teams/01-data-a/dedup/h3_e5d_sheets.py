@@ -22,7 +22,8 @@ STAGES
   controls  per language pair, n_controls pairs of known answer from the controls file (for example same-topic pages
             that are not translations), mixed in blind
   texts     each document's text from inputs, read as h3.py read it and checked against the run's character counts;
-            each side is shown as the sentences h3.py scored (sentence_min_chars, at most max_sentences), one per line
+            each side is shown as the sentences h3.py scored, one per line: sentence_min_chars and max_sentences come
+            from the runs' h3_summary.json, and runs that split sentences differently are refused
   blind     items get IDs in a random order, the two sides of each item are swapped at random, and every reader gets
             the items in their own order
 
@@ -38,7 +39,7 @@ CONFIG (JSON; keys starting with "_" are comments)
   per_band    pairs drawn per band; one count for every language pair, or a {language pair: count} map that names
               each pair (either order), e.g. {"sa-en": 20, "sa-hi": 20, "hi-en": 10, "or-en": 10}
   n_controls  controls per language pair; one count, or a map as for per_band
-  readers, seed, sentence_min_chars, max_sentences
+  readers, seed
 
 WHAT IT WRITES (in out)
 =======================
@@ -51,7 +52,8 @@ WHAT IT WRITES (in out)
                                the pair). Never shown to readers
   key/sentences.parquet        the sentences shown, per item and side, for the sentence-threshold sweep
   e5d_summary.json             counts per language pair, band and encoder (in the band, drawn, wanted), shortfalls,
-                               the seed, the inputs' and outputs' sha256 and the stage times: IDs and counts only
+                               the runs' sentence settings, the seed, the inputs' and outputs' sha256 and the stage
+                               times: IDs and counts only
 
 The sheets and sentences.parquet hold document text: they stay in out/ and are never committed.
 
@@ -79,8 +81,8 @@ from h3_signals import sentences_batch  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[3]   # teams/01-data-a/dedup/h3_e5d_sheets.py -> the repository root
 DEFAULTS = {"runs": {}, "inputs": "", "controls": "", "out": "out/e5d", "pairs": [],
-            "bands": [0.3, 0.45, 0.6, 0.75, 1.0], "per_band": 20, "n_controls": 10, "readers": 2, "seed": 20261122,
-            "sentence_min_chars": 20, "max_sentences": 16}
+            "bands": [0.3, 0.45, 0.6, 0.75, 1.0], "per_band": 20, "n_controls": 10, "readers": 2, "seed": 20261122}
+SENTENCE_SETTINGS = ("sentence_min_chars", "max_sentences")   # how h3.py split the sentences it scored
 SHEET_COLUMNS = ["item", "text_1", "text_2", "translation", "note"]
 SIDE = ("row", "id", "pack", "lang", "split", "sentences")          # h3_candidates.csv columns with _a and _b
 SCORES = ("coverage", "doc_cosine", "mean_sentence_cosine", "length_ratio", "numbers_jaccard", "latin_share",
@@ -172,12 +174,10 @@ def load_config(path):
     if (not isinstance(b, list) or len(b) < 2 or not all(number(x) and 0 <= x <= 1 for x in b)
             or not all(np.diff(np.asarray(b, dtype=np.float64)) > 0)):
         sys.exit("ERROR: bands must be at least two increasing coverage values between 0 and 1")
-    for name in ("readers", "max_sentences"):
-        if type(cfg[name]) is not int or cfg[name] <= 0:
-            sys.exit(f"ERROR: {name} must be a positive integer")
-    for name in ("sentence_min_chars", "seed"):
-        if type(cfg[name]) is not int or cfg[name] < 0:
-            sys.exit(f"ERROR: {name} must be a nonnegative integer")
+    if type(cfg["readers"]) is not int or cfg["readers"] <= 0:
+        sys.exit("ERROR: readers must be a positive integer")
+    if type(cfg["seed"]) is not int or cfg["seed"] < 0:
+        sys.exit("ERROR: seed must be a nonnegative integer")
     names = {**{f"{b}-{a}": f"{a}-{b}" for a, b in pairs}, **{f"{a}-{b}": f"{a}-{b}" for a, b in pairs}}
     for name, low in (("per_band", 1), ("n_controls", 0)):     # one count, or one per language pair
         value = cfg[name]
@@ -208,9 +208,14 @@ def load_run(encoder, folder, pairs):
     for path in (cand_path, docs_path, summary_path):
         if not path.is_file():
             sys.exit(f"ERROR: run {encoder}: {path} is missing; runs must be h3.py output folders")
-    status = json.loads(summary_path.read_text(encoding="utf-8")).get("status")
-    if status != "complete":
-        sys.exit(f"ERROR: run {encoder} has status {status!r}; only a complete h3.py run may be used")
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    if summary.get("status") != "complete":
+        sys.exit(f"ERROR: run {encoder} has status {summary.get('status')!r}; only a complete h3.py run may be used")
+    run_cfg = summary.get("config") or {}
+    settings = {k: run_cfg.get(k) for k in SENTENCE_SETTINGS}
+    if (type(settings["sentence_min_chars"]) is not int or settings["sentence_min_chars"] < 0
+            or type(settings["max_sentences"]) is not int or settings["max_sentences"] <= 0):
+        sys.exit(f"ERROR: run {encoder}: {summary_path} does not record h3.py's {' and '.join(SENTENCE_SETTINGS)}")
     types = {c: pa.string() for c in STRINGS} | {"row_a": pa.int64(), "row_b": pa.int64()}
     cand = pacsv.read_csv(cand_path, convert_options=pacsv.ConvertOptions(column_types=types))
     docs = pq.read_table(docs_path)
@@ -239,7 +244,7 @@ def load_run(encoder, folder, pairs):
     table = pa.table(cols)
     if pc.count_distinct(table["pair_id"]).as_py() != table.num_rows:
         sys.exit(f"ERROR: run {encoder}: {cand_path} lists a pair twice")
-    return {"name": encoder, "folder": folder, "table": table, "docs": docs, "pair": pair,
+    return {"name": encoder, "folder": folder, "table": table, "docs": docs, "pair": pair, "settings": settings,
             "coverage": floats(table, "coverage"), "pair_id": column(table, "pair_id"),
             "dropped": int((~keep).sum()), "sha256": {p.name: h3.sha256_file(p) for p in (cand_path, docs_path)}}
 
@@ -292,16 +297,27 @@ def read_documents(run, rows, parts):
     return texts
 
 
-def shown(texts, cfg):
-    """Each text as h3.py scored it: its sentences, as a list and as lines."""
-    s, parent = sentences_batch(texts, cfg["sentence_min_chars"], cfg["max_sentences"])
+def scored_settings(runs):
+    """The sentence settings every run used; runs that split sentences differently are refused, since one sheet
+    shows each pair once."""
+    first = runs[0]["settings"]
+    for run in runs[1:]:                                          # the runs
+        if run["settings"] != first:
+            sys.exit(f"ERROR: runs {runs[0]['name']} and {run['name']} split sentences differently ({first} and "
+                     f"{run['settings']}); the sheets need one setting")
+    return first
+
+
+def shown(texts, settings):
+    """Each text as h3.py scored it, with the runs' settings: its sentences, as a list and as lines."""
+    s, parent = sentences_batch(texts, settings["sentence_min_chars"], settings["max_sentences"])
     counts = np.bincount(parent, minlength=len(texts))
     offsets = pa.array(np.concatenate(([0], np.cumsum(counts))).astype(np.int32))
     lists = pa.ListArray.from_arrays(offsets, s.combine_chunks() if isinstance(s, pa.ChunkedArray) else s)
     return lists, pc.binary_join(lists, "\n")
 
 
-def candidate_items(runs, run_ix, row_ix, band_ix, cfg, names, parts):
+def candidate_items(runs, run_ix, row_ix, band_ix, cfg, names, parts, settings):
     """One row per drawn pair: its documents, the sentences shown and the band label; in run order."""
     labels = [f"{a:.2f}-{b:.2f}" for a, b in zip(cfg["bands"], cfg["bands"][1:])]
     pieces = []
@@ -312,7 +328,7 @@ def candidate_items(runs, run_ix, row_ix, band_ix, cfg, names, parts):
         t = run["table"].take(pa.array(row_ix[at], pa.int64()))
         ra, rb = ints(t, "row_a"), ints(t, "row_b")
         rows = np.unique(np.concatenate([ra, rb]))
-        lists, lines = shown(read_documents(run, rows, parts), cfg)
+        lists, lines = shown(read_documents(run, rows, parts), settings)
         docs, n = run["docs"], len(at)
         piece = {"pair": pa.array(names, pa.string()).take(pa.array(ints(t, "pair"))),
                  "source": const("candidate", n),
@@ -328,7 +344,7 @@ def candidate_items(runs, run_ix, row_ix, band_ix, cfg, names, parts):
     return pieces
 
 
-def control_items(cfg, names, rng):
+def control_items(cfg, names, rng, settings):
     """n_controls pairs of known answer per language pair, from the controls file, and the counts."""
     if not cfg["controls"] or not any(count(cfg, "n_controls", name) for name in names):
         return [], {}
@@ -362,7 +378,7 @@ def control_items(cfg, names, rng):
         for s, lang in (("a", x), ("b", y)):
             piece[f"pack_{s}"], piece[f"split_{s}"], piece[f"doc_id_{s}"] = none, none, none
             piece[f"lang_{s}"] = const(lang, n)
-            piece[f"sentences_{s}"], piece[f"text_{s}"] = shown(column(c, f"text_{s}"), cfg)
+            piece[f"sentences_{s}"], piece[f"text_{s}"] = shown(column(c, f"text_{s}"), settings)
         pieces.append(pa.table(piece).select(ITEM_COLUMNS))
     return pieces, counts
 
@@ -396,13 +412,14 @@ def main(argv=None):
     names = [f"{x}-{y}" for x, y in cfg["pairs"]]
     rng = np.random.default_rng(cfg["seed"])
     runs = [load_run(enc, folder, cfg["pairs"]) for enc, folder in cfg["runs"].items()]
+    settings = scored_settings(runs)
     found = h3.find_parts(REPO / cfg["inputs"])
     parts = {"keys": pa.array([f"{s}\t{p}" for s, p, _ in found]), "paths": [path for _, _, path in found]}
     tick("load")
     run_ix, row_ix, band_ix, strata = sample(runs, cfg, names, rng)
     tick("sample")
-    pieces = candidate_items(runs, run_ix, row_ix, band_ix, cfg, names, parts)
-    controls, control_counts = control_items(cfg, names, rng)
+    pieces = candidate_items(runs, run_ix, row_ix, band_ix, cfg, names, parts, settings)
+    controls, control_counts = control_items(cfg, names, rng, settings)
     tick("texts")
     rows = pieces + controls
     out = REPO / cfg["out"]
@@ -457,7 +474,7 @@ def main(argv=None):
         "strata": strata, "shortfalls": [s for s in strata if s["drawn"] < s["wanted"]],
         "controls": control_counts,
         "controls_sha256": h3.sha256_file(REPO / cfg["controls"]) if control_counts else None,
-        "items": items_total, "readers": cfg["readers"],
+        "items": items_total, "readers": cfg["readers"], "sentence_settings": settings,
         "outputs": {str(p.relative_to(out)): h3.sha256_file(p) for p in outputs},
         "stages_seconds": seconds, "wall_seconds": round(time.perf_counter() - t0, 2),
         "versions": {"python": platform.python_version(), "numpy": np.__version__, "pyarrow": pa.__version__}}

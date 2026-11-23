@@ -171,19 +171,22 @@ translation or not. For each language pair it draws pairs from every coverage ba
 For the Sanskrit pairs it pools the LaBSE and BGE-M3 candidates (theschoolofai/era-v5-lab#666; TSAI on
 theschoolofai/era-v5-lab#626), so a pair is read once and the key holds both encoders' scores. It mixes in controls of
 known answer. `per_band` (pairs per band) and `n_controls` are one count, or one per language pair, so the Sanskrit
-pairs can get larger sheets than Hindi and Odia. A sheet shows only the item and the two texts, as the sentences `h3.py` scored, with the sides swapped at
-random and each reader's items in their own order. Scores, encoders, packs and doc_ids are only in the key. The sheets
-hold document text and stay in `out/`.
+pairs can get larger sheets than Hindi and Odia. A sheet shows only the item and the two texts, as the sentences `h3.py`
+scored: `sentence_min_chars` and `max_sentences` come from the runs' `h3_summary.json`, and runs that split sentences
+differently are refused. The sides are swapped at random and each reader's items are in their own order. Scores,
+encoders, packs and doc_ids are only in the key. The sheets hold document text and stay in `out/`.
 
 `h3_e5d_flores.py` tests the sheets on FLORES-200 (FLORES+ devtest, revision `e707e62e`, the files and sha256 of G9's
 `teams/09-evaluation/fingerprints/v1/flores200/MANIFEST.json`): blocks of 8 sentences in en, hi, sa and or, where a
-block against the same block in another language is a translation and against another block is not. Its `check` scores
-the sheets against those answers and checks that they are blind and match the key.
+block against the same block in another language is a translation and against another block is not. Every language
+must hold the same sentence ids, so that block i is the same text in each. Its `check` scores the sheets against those
+answers. It also checks that the sheets are blind and match the key, that each text is the key's sentences on the side
+the key names, and that the answer cells are empty.
 
 ### Speed and end-to-end check on FLORES
 
 - Hardware: Apple M4, `h3.py` on MPS, fp32; the sheet scripts on the CPU
-- Wall time: **140 s** from a cold start (`out/e5d_flores` removed)
+- Wall time: **145 s** from a cold start (`out/e5d_flores` removed)
 - Model: LaBSE at revision `836121a`, `model.safetensors` sha256 `77d8e1f2dbab6eb5d3c261ce9d3dbf1e3c69e02938c95f934f94f42c22dfa31f`
   (the value E5c expects)
 - Versions: Python 3.12.10, numpy 2.4.3, pyarrow 23.0.1, torch 2.13.0
@@ -191,10 +194,10 @@ the sheets against those answers and checks that they are blind and match the ke
 | Stage | Seconds | What |
 |---|---|---|
 | build | 1 | 126 blocks of 8 sentences in 4 languages; 126 controls per language pair |
-| `h3.py`, `h3_e5d_flores.json` | 79 | LaBSE at E5c's settings (0.55 for the Sanskrit pairs), 4 language pairs: 490 pairs verified, 416 qualifying |
-| `h3.py`, `h3_e5d_flores_t07.json` | 57 | the Sanskrit pairs at sentence threshold 0.7, in a second encoder's place: 207 verified, 50 qualifying |
+| `h3.py`, `h3_e5d_flores.json` | 83 | LaBSE at E5c's settings (0.55 for the Sanskrit pairs), 4 language pairs: 490 pairs verified, 416 qualifying |
+| `h3.py`, `h3_e5d_flores_t07.json` | 59 | the Sanskrit pairs at sentence threshold 0.7, in a second encoder's place: 207 verified, 50 qualifying |
 | `h3_e5d_sheets.py` | 2 | 217 items, 2 sheets per language pair |
-| `h3_e5d_flores.py check` | 1 | status ok |
+| `h3_e5d_flores.py check` | 0 | status ok: every sheet's texts are the key's sentences on the key's sides, all answer cells empty |
 
 | Language pair | Candidates drawn | Translations among them | Translations below 0.6 | Non-translations at or above 0.6 | Controls |
 |---|---|---|---|---|---|
@@ -242,8 +245,8 @@ or-en: 20 candidates (20 translations), 10 controls; below 0.6: 0 translations; 
 sa-en: 67 candidates (67 translations), 10 controls; below 0.6: 27 translations; at or above: 0 non-translations
 sa-hi: 70 candidates (70 translations), 10 controls; below 0.6: 38 translations; at or above: 0 non-translations
 flores check: ok
--- 1 s
-exit 0 wall 140 s end 2026-11-23T00:54:58Z
+-- 0 s
+exit 0 wall 145 s end 2026-11-23T12:33:55Z
 ```
 
 The full console log is `teams/01-data-a/jobs/logs/2026-11-23-h3-e5d-flores.txt`. The folder
@@ -275,8 +278,8 @@ python3 -B -m pytest teams/01-data-a/dedup/tests/test_h3_e5d_sheets.py teams/01-
 ```
 
 ```text
-...........................                                              [100%]
-27 passed in 8.16s
+...........................................                              [100%]
+43 passed in 3.38s
 ```
 
 They check that a sheet has only its five columns and no doc_id, pack or score. They also check:
@@ -285,11 +288,14 @@ They check that a sheet has only its five columns and no doc_id, pack or score. 
 - pairs are drawn from bands on both sides of the threshold;
 - a pair both encoders listed is read once with both scores, even when the runs list its sides in the other order;
 - side a is in the pair's first language;
-- the texts are the sentences `h3.py` scored, on the sides the key names;
+- the texts are the sentences `h3.py` scored, split with the runs' settings, on the sides the key names;
 - the controls are mixed in, and the seed fixes the sheets;
-- a document changed since the run, an incomplete run and bad configs are refused;
-- the FLORES packs, the controls and the FLORES+ `.jsonl` input are built as described;
-- the check catches a sheet that is not blind or not the key's;
+- a document changed since the run, an incomplete run, runs that split sentences differently or do not record how,
+  and bad configs are refused;
+- the FLORES packs, the controls and the FLORES+ `.jsonl` input are built as described, and languages with different
+  sentence ids are refused;
+- the check catches a sheet that is not blind or not the key's, a text that is not the key's sentences or is on the
+  wrong side, filled-in answer cells and a missing `sentences.parquet`;
 - the generator and the check work end to end without a model.
 
 Every text in them is made up.
