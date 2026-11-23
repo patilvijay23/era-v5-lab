@@ -175,6 +175,18 @@ def test_both_sides_of_the_threshold_are_drawn(tmp_path, monkeypatch):
     assert all(s["encoder"] == "labse" and s["drawn"] <= s["wanted"] == 2 for s in hi)
 
 
+def test_each_language_pair_can_have_its_own_sample_size(tmp_path, monkeypatch):
+    path, _ = setup(tmp_path, monkeypatch, per_band={"en-sa": 4, "hi-en": 1}, n_controls={"sa-en": 2, "hi-en": 0})
+    run(path)
+    summary = json.loads((tmp_path / "out/e5d/e5d_summary.json").read_text())
+    wanted = {(s["pair"], s["encoder"]): s["wanted"] for s in summary["strata"]}
+    assert wanted == {("sa-en", "labse"): 2, ("sa-en", "bge"): 2, ("hi-en", "labse"): 1}   # 4 split between 2
+    hi = [x for x in key_rows(tmp_path, "hi-en")]
+    assert len(hi) == 4 and all(x["source"] == "candidate" for x in hi)                   # 1 per band, no controls
+    assert sum(x["source"] == "control" for x in key_rows(tmp_path, "sa-en")) == 2
+    assert summary["config"]["per_band"] == {"sa-en": 4, "hi-en": 1}                       # named in pairs' order
+
+
 def test_a_pair_both_encoders_listed_is_read_once_with_both_scores(tmp_path, monkeypatch):
     path, _ = setup(tmp_path, monkeypatch, per_band=50)
     run(path)
@@ -274,6 +286,11 @@ def test_an_incomplete_run_is_refused(tmp_path, monkeypatch):
     ({"pairs": [["sa", "en"], ["en", "sa"]]}, "pairs must be distinct"),
     ({"runs": {}}, "runs must be"),
     ({"per_band": 0}, "per_band must be"),
+    ({"per_band": {"sa-en": 4}}, "map must name each language pair"),
+    ({"per_band": {"sa-en": 4, "hi-en": 2, "sa-hi": 1}}, "map must name each language pair"),
+    ({"per_band": {"sa-en": 4, "en-sa": 4, "hi-en": 2}}, "map must name each language pair"),
+    ({"per_band": {"sa-en": 4, "hi-en": 0}}, "per_band must be a positive integer, or a map"),
+    ({"n_controls": {"sa-en": -1, "hi-en": 1}}, "n_controls must be a nonnegative integer, or a map"),
     ({"surprise": 1}, "unknown keys")])
 def test_bad_configs_are_refused(tmp_path, monkeypatch, change, message):
     path, _ = setup(tmp_path, monkeypatch, **change)

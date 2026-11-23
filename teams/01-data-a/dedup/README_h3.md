@@ -170,7 +170,8 @@ The full console log is `teams/01-data-a/jobs/logs/2026-11-17-h3-local.txt` and 
 translation or not. For each language pair it draws pairs from every coverage band on both sides of the 0.6 threshold.
 For the Sanskrit pairs it pools the LaBSE and BGE-M3 candidates (theschoolofai/era-v5-lab#666; TSAI on
 theschoolofai/era-v5-lab#626), so a pair is read once and the key holds both encoders' scores. It mixes in controls of
-known answer. A sheet shows only the item and the two texts, as the sentences `h3.py` scored, with the sides swapped at
+known answer. `per_band` (pairs per band) and `n_controls` are one count, or one per language pair, so the Sanskrit
+pairs can get larger sheets than Hindi and Odia. A sheet shows only the item and the two texts, as the sentences `h3.py` scored, with the sides swapped at
 random and each reader's items in their own order. Scores, encoders, packs and doc_ids are only in the key. The sheets
 hold document text and stay in `out/`.
 
