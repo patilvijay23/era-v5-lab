@@ -253,6 +253,85 @@ The full console log is `teams/01-data-a/jobs/logs/2026-11-23-h3-e5d-flores.txt`
 `teams/01-data-a/jobs/logs/2026-11-23-h3-e5d-flores/` holds the summaries of the build, both `h3.py` runs, the sheets and
 the check, and `flores_truth.csv` (each item's answer). They hold IDs and counts only, no FLORES text.
 
+## Harm check with planted cases (task 3.5)
+
+The harm check runs the pipeline on the week-1 diagnosis packs (9 prose packs of 500 documents; 1,308 gold documents)
+with removal on, and passes when no gold document is removed (theschoolofai/era-v5-lab#625). The packs have no held-out
+split, so `run_h3_harm.sh` holds out one language at a time (sa, hi, en). The run of 19 Nov
+(`jobs/logs/2026-11-19-h3-harm-diag-local.txt`) passed, but nothing qualified, so it tested nothing
+(theschoolofai/era-v5-lab#626). `h3_harm_plant.py` adds pairs whose answer is known to each layout:
+
+| Case | Planted | Expected with `h3.remove: true` |
+|---|---|---|
+| p1 | FLORES+ devtest blocks of 8 sentences, 3 per language pair: the held-out language's block and the same block in another language, in train | The train document is removed (rule H3) exactly when it qualifies against a held-out document; the held-out one is kept |
+| p2 | The 6 `ind-sa-fw2` same-page pairs read as real translations: the Sanskrit half held out, the translation half in train (sa-held only) | As p1 |
+| p3 | 2 FLORES+ blocks in the two other languages, both in train | Never removed |
+
+`h3_harm_check.py` then checks every layout: every candidate verified (`max_verify` 60,000); with removal on, the harm
+check passes and no held-out document is removed; with removal off, `remove_list.csv` is byte-identical to the run
+without H3; each p1 and p2 pair is as expected; every language pair with p1 plants has a removal; p3 is never removed.
+It also lists H3 removals of real documents, and the margin: the highest coverage of a pair of real documents. A chain
+through an H1/H2 copy cannot be planted with real text (the copy's translation also matches the held-out document
+itself), so it stays with `tests/test_dedup_h3.py`.
+
+| Layout | Gold removed (of 1,308) | Removal off = no H3 | H3 removed (real documents) | p1 removed / qualifying / planted | p2 | p3 removed / planted |
+|---|---|---|---|---|---|---|
+| sa held out | 0 | yes | 5 (0) | 3 / 3 / 6 | 2 / 2 / 6 | 0 / 2 |
+| hi held out | 0 | yes | 4 (0) | 4 / 4 / 6 | none | 0 / 2 |
+| en held out | 0 | yes | 5 (0) | 5 / 5 / 6 | none | 0 / 2 |
+
+- **Removal is tested in every language pair.** p1 pairs removed: sa-en 2 of 3 (sa and en held out), sa-hi 1 of 3 (sa
+  and hi held out), hi-en 3 of 3 (hi and en held out). Every qualifying held-out ↔ train pair was removed and no other.
+- **Sanskrit misses.** Of the planted Sanskrit pairs that missed, some were never retrieved (no verified pair), and the
+  others were verified below the cut: coverage 0.556 and 0.400 for FLORES+ sa-hi blocks, and 0.500, 0.375 and 0.200
+  for real web pairs. Two of the 6 web pairs qualified (sa-hi 1.000, sa-en 0.800).
+- **p3:** the hi-en train ↔ train pairs qualified (coverage 1.000) and were reported (`reported_train_train`), not
+  removed; the sa-en and sa-hi ones did not qualify.
+- **Margin on real documents:** highest coverage sa-en 0.143, sa-hi 0.188 (0.083 with a gold document), hi-en 0.125
+  (0.062 with a gold document); none qualifies.
+
+### Speed and end-to-end check
+
+- Hardware: Apple M4, `h3.py` on MPS, fp32
+- Wall time: **359 s** from a cold start (`out/h3harm` and its embedding cache removed)
+- Model: LaBSE at revision `836121a`, as in E5c
+
+| Stage | Seconds |
+|---|---|
+| spec v1.1 `clean.py`, 9 packs | 15 |
+| `overlap.py`, per layout | 5, 5, 5 |
+| `h3.py`, per layout (sa, hi, en held out): 383, 373 and 373 pairs verified | 168, 76, 76 |
+| `dedup.py`, 3 modes per layout; `h3_harm_plant.py`; `h3_harm_configs.py`; `h3_harm_check.py` | 9 in all |
+
+- Sync check: `h3_harm_plant.py` and `h3_harm_check.py` use no torch. `h3.py`'s is TODO on CUDA, as above
+- No Python loops over tokens, documents, sentences or pairs in the new scripts: yes. Loops remain over the layouts,
+  the dedup.py modes, the cases, the language pairs, the packs written and the gold files
+
+Command, from the repository root (inputs outside the repository: the diagnosis packs in `../../../All-parquets`,
+FLORES+ devtest in `../flores_plus`, `../known_pairs.parquet` and `../real_translations.csv`):
+
+```sh
+mkdir -p out && zsh teams/01-data-a/dedup/run_h3_harm.sh 2>&1 | tee out/h3harm.log
+```
+
+Last lines of output:
+
+```text
+== 6. Harm check with the planted cases
+| Layout | Harm check | Gold in input | Gold removed | remove false = no H3 | H3 removed (real) | p1 removed / qualifying / planted | p2 | p3 removed / planted | Status |
+|---|---|---|---|---|---|---|---|---|---|
+| sa-held | pass | 1308 | 0 | yes | 5 (0) | 3 / 3 / 6 | 2 / 2 / 6 | 0 / 2 | pass |
+| hi-held | pass | 1308 | 0 | yes | 4 (0) | 4 / 4 / 6 | 0 / 0 / 0 | 0 / 2 | pass |
+| en-held | pass | 1308 | 0 | yes | 5 (0) | 5 / 5 / 6 | 0 / 0 / 0 | 0 / 2 | pass |
+harm cases: pass
+
+wall seconds: 359
+```
+
+The full console log is `teams/01-data-a/jobs/logs/2026-11-23-h3-harm-cases.txt`. The folder
+`teams/01-data-a/jobs/logs/2026-11-23-h3-harm-cases/` holds `harm_cases.json` (every planted pair's result, the margin)
+and `plants.csv` and `plants.json` (the planted pairs and the inputs' sha256): IDs, scores and counts only.
+
 ## Tests
 
 ```sh
@@ -299,3 +378,21 @@ They check that a sheet has only its five columns and no doc_id, pack or score. 
 - the generator and the check work end to end without a model.
 
 Every text in them is made up.
+
+The harm check with planted cases:
+
+```sh
+python3 -B -m pytest teams/01-data-a/dedup/tests/test_h3_harm_plant.py teams/01-data-a/dedup/tests/test_h3_harm_check.py -q -rs -p no:cacheprovider
+```
+
+```text
+.....................                                                    [100%]
+21 passed in 0.80s
+```
+
+They check which pairs each layout gets and where their documents go (the FLORES+ blocks in their packs, distinct
+blocks, marked IDs, the Sanskrit half of a web pair held out), and that unknown web pairs, FLORES+ files with different
+sentence ids and a missing layout are refused. On hand-written run outputs, they check that a layout passes when the
+qualifying plant is removed, including a web pair removed through its original page, and that a real removal is listed;
+and that the check fails when a qualifying plant stays, another plant goes, a held-out document is removed, gold is
+removed, removal off changes the remove list, or candidates are left unverified. Every ID in them is made up.
