@@ -136,7 +136,7 @@ def test_prepare_run_pins_the_actual_inventory_and_refuses_incomplete_pack_metad
     assert not (out / 'run.json').exists()
     (model / 'config.json').write_bytes(b'config.json')
     cfg = json.loads(prepare_run.prepare(out, raw, tokenizer, table_path, 'first-training-v1', model,
-                                        f2_workers=30, clean_workers=16, overlap_workers=12).read_text())
+                                        f2_workers=30, clean_workers=16).read_text())
     assert cfg['inventory'] == 'out/inputs/expected_inventory.json'
     assert cfg['stages']['clean']['expected_parts'] == {'train': 33 if partial else 38, 'heldout': 33 if partial else 38}
     assert cfg['stages']['overlap']['script'].endswith('/minhash_overlap.py')
@@ -145,7 +145,7 @@ def test_prepare_run_pins_the_actual_inventory_and_refuses_incomplete_pack_metad
     assert cfg['stages']['shards']['dataset_version'] == 'corpus-v1'  # not derived from run_id
     assert cfg['intermediates'] == 'keep' and cfg['stages']['h3']['mode'] == 'run'
     assert cfg['stages']['f2'] == {'pool': True, 'workers': 30}
-    assert cfg['stages']['clean']['workers'] == 16 and cfg['stages']['overlap']['workers'] == 12
+    assert cfg['stages']['clean']['workers'] == 16 and 'workers' not in cfg['stages']['overlap']  # MinHash: its settings say 16
     # the staged-data sizing gate: a clean-only run without the inventory, and the full run adopting its folder
     clean = json.loads((out / 'run_clean.json').read_text())
     production = json.loads((out / 'run_production.json').read_text())
@@ -171,7 +171,7 @@ def test_prepare_run_pins_the_actual_inventory_and_refuses_incomplete_pack_metad
     assert generated['code-go']['license'] == next(p['license'] for p in scope['packs'] if p['pack_id'] == 'code-go')
 
 
-@pytest.mark.parametrize('name', ['f2_workers', 'clean_workers', 'overlap_workers'])
+@pytest.mark.parametrize('name', ['f2_workers', 'clean_workers'])
 @pytest.mark.parametrize('workers', [0, -1, True, '30'])
 def test_prepare_run_rejects_invalid_worker_counts(tmp_path, name, workers):
     with pytest.raises(ValueError, match=f'{name} must be a positive integer'):
@@ -180,7 +180,7 @@ def test_prepare_run_rejects_invalid_worker_counts(tmp_path, name, workers):
 
 def test_prepare_run_needs_every_worker_count_on_the_command_line(monkeypatch, tmp_path):
     base = ['prepare_run.py', '--bundle', str(tmp_path), '--input-root', str(tmp_path), '--tokenizer', str(tmp_path), '--run-id', 'run']
-    flags = {'--clean-workers': '16', '--overlap-workers': '12', '--f2-workers': '30'}
+    flags = {'--clean-workers': '16', '--f2-workers': '30'}
     monkeypatch.setattr(prepare_run, 'check_f1_parsers', lambda: None)
     seen = {}
     monkeypatch.setattr(prepare_run, 'prepare', lambda *a, **k: seen.update(k) or 'run.json')
@@ -192,7 +192,7 @@ def test_prepare_run_needs_every_worker_count_on_the_command_line(monkeypatch, t
         assert stop.value.code == 2 and not seen   # argparse: a required option is missing
     monkeypatch.setattr(sys, 'argv', base + [x for kv in flags.items() for x in kv])
     prepare_run.main()
-    assert (seen['clean_workers'], seen['overlap_workers'], seen['f2_workers']) == (16, 12, 30)
+    assert (seen['clean_workers'], seen['f2_workers']) == (16, 30)
 
 
 def test_approved_scope_contains_production_shard_metadata():
@@ -321,7 +321,7 @@ def test_prepare_run_checks_the_grammars_before_anything_else(monkeypatch, tmp_p
     monkeypatch.setattr(prepare_run, 'prepare', lambda *a, **k: pytest.fail('prepare ran without the grammars'))
     monkeypatch.setattr(sys, 'argv', ['prepare_run.py', '--bundle', str(tmp_path), '--input-root', str(tmp_path),
                                       '--tokenizer', str(tmp_path), '--run-id', 'run', '--clean-workers', '16',
-                                      '--overlap-workers', '12', '--f2-workers', '30'])
+                                      '--f2-workers', '30'])
     with pytest.raises(SystemExit) as stop:
         prepare_run.main()
     assert stop.value.code == 1

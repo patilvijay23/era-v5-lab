@@ -74,9 +74,8 @@ def check_f1_parsers():
         raise ValueError(f"tree-sitter grammars for F1 are not downloaded: {', '.join(missing)}; run the setup step")
 
 
-def prepare(bundle, raw, tokenizer, pack_table, run_id, model_path=None, f2_workers=1,
-            clean_workers=None, overlap_workers=None):
-    for name, count in (("f2_workers", f2_workers), ("clean_workers", clean_workers), ("overlap_workers", overlap_workers)):
+def prepare(bundle, raw, tokenizer, pack_table, run_id, model_path=None, f2_workers=1, clean_workers=None):
+    for name, count in (("f2_workers", f2_workers), ("clean_workers", clean_workers)):
         if count is not None and (type(count) is not int or count < 1):  # None: the settings file's value stands
             raise ValueError(f"{name} must be a positive integer")
     bundle, raw, tokenizer = (Path(p).resolve() for p in (bundle, raw, tokenizer))
@@ -159,8 +158,7 @@ def prepare(bundle, raw, tokenizer, pack_table, run_id, model_path=None, f2_work
                       **({"workers": clean_workers} if clean_workers else {})},
             "overlap": {"mode": "run", "script": "teams/01-data-a/dedup/minhash_overlap.py",
                         "settings": "teams/01-data-a/dedup/minhash_overlap_partial.json" if selection is not None
-                        else "teams/01-data-a/dedup/minhash_overlap.json",
-                        **({"workers": overlap_workers} if overlap_workers else {})},
+                        else "teams/01-data-a/dedup/minhash_overlap.json"},
             "h3": {"mode": "run", "settings": "teams/01-data-a/jobs/2026-11-19-first-training/h3.json"},
             "dedup": {"mode": "run", "settings": "teams/01-data-a/dedup/dedup.json"},
             "f2": {"pool": True, "workers": f2_workers},
@@ -187,8 +185,6 @@ def main():
                     help="Optional explicit table; by default materialize the approved input metadata in the bundle.")
     ap.add_argument("--clean-workers", type=int, required=True,
                     help="Parts the clean stage cleans at once (about 0.5 GB each). 16 on the 32 vCPU / 64 GiB job host.")
-    ap.add_argument("--overlap-workers", type=int, required=True,
-                    help="MinHash signature processes (under 1 GB each on the sample, 1.5 GB while re-reading candidates). 16 on the 32 vCPU / 64 GiB job host, as the MinHash settings and the sizing gate.")
     ap.add_argument("--f2-workers", type=int, required=True,
                     help="F2 processes (the fingerprint set is shared). 30 on the 32 vCPU job host.")
     ap.add_argument("--run-id", required=True)
@@ -196,8 +192,7 @@ def main():
     try:
         check_f1_parsers()
         print(prepare(args.bundle, args.input_root, args.tokenizer, args.pack_table, args.run_id,
-                      f2_workers=args.f2_workers, clean_workers=args.clean_workers,
-                      overlap_workers=args.overlap_workers))
+                      f2_workers=args.f2_workers, clean_workers=args.clean_workers))
     except (OSError, ValueError, KeyError, TypeError) as exc:
         ap.exit(1, f"prepare_run: {exc}\n")
 

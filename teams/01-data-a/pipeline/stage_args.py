@@ -26,9 +26,7 @@ spec_v1_1/clean.py) and pins its sha256; the job loads that file, so no wrapper 
 verifies them); it is written into the generated config for the job to read, and no other stage has it.
 
 "workers": N in stages.clean is how many parts the clean job cleans at once. It replaces "workers" of the settings file in the
-generated config; without it the settings file's value stands (the job's default is 1). stages.overlap takes it too, for the
-MinHash script (minhash_overlap.py: processes for its per-part signatures; its settings files say 16, which the 1x sizing and
-the staged-data gate are based on; 0 would be every core of the machine). The exact overlap.py has no such key and refuses the config.
+generated config; without it the settings file's value stands (the job's default is 1).
 
   build("overlap", spec, folders=..., cfg_dir=..., repo=...) -> {"command", "settings", "settings_sha256", "config", "config_sha256"}
 """
@@ -109,7 +107,7 @@ def generated_values(stage, folders, repo, spec=None):
                   "expected_parts": spec["expected_parts"], **({"sample": spec["sample"]} if spec.get("sample") else {})}
     if stage == "clean" and (spec or {}).get("resume") is True:
         values["resume"] = True
-    if stage in ("clean", "overlap") and (spec or {}).get("workers") is not None:  # replaces "workers" of the settings file
+    if stage == "clean" and (spec or {}).get("workers") is not None:  # replaces "workers" of the settings file
         values["workers"] = spec["workers"]
     values.update({key: relative(folders[owner], repo) for key, owner in STAGES[stage]["keys"].items()})
     if stage == "h3":

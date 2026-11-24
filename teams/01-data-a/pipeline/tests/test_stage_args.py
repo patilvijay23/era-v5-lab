@@ -78,20 +78,6 @@ def test_workers_of_the_run_config_replace_the_one_in_the_settings(repo, folders
     assert "workers" not in json.loads((repo / "cfg" / "clean.json").read_text(encoding="utf-8"))
 
 
-def test_workers_of_the_run_config_replace_the_one_in_the_overlap_settings(repo, folders):
-    settings(repo, "minhash", {**OVERLAP, "workers": 0, "hashes": 128})
-    for spec, workers in (({"settings": "minhash.json", "script": "teams/01-data-a/dedup/minhash_overlap.py", "workers": 12}, 12),
-                          ({"settings": "minhash.json", "script": "teams/01-data-a/dedup/minhash_overlap.py"}, 0)):
-        r = sa.build("overlap", spec, folders, repo / "cfg", repo)
-        made = json.loads((repo / "cfg" / "overlap.json").read_text(encoding="utf-8"))
-        assert (made["workers"], made["hashes"], made["inputs"], made["out"]) == (workers, 128, "out/run1/clean", "out/run1/overlap")
-        assert r["command"][0] == "teams/01-data-a/dedup/minhash_overlap.py"
-    settings(repo, "plain", OVERLAP)   # without the key in the run config nothing is added to settings that have none
-    sa.build("overlap", {"settings": "plain.json"}, folders, repo / "cfg", repo)
-    assert "workers" not in json.loads((repo / "cfg" / "overlap.json").read_text(encoding="utf-8"))
-    assert "workers" not in sa.generated_values("dedup", folders, repo, {"workers": 3})   # only clean and overlap take it
-
-
 @pytest.mark.parametrize("value", ["yes", 1, None, "true"])
 def test_resume_must_be_true_or_false(repo, folders, value):
     settings(repo, "job", {})

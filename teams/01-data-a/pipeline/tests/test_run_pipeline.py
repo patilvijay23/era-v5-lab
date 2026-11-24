@@ -630,31 +630,6 @@ def test_clean_workers_need_a_clean_stage_that_runs_from_settings(staged, tsai_o
         rp.run(path)
 
 
-def test_overlap_workers_of_the_run_config_reach_the_plan(staged):
-    path, repo = staged
-    assert "workers = " not in rp.plan(path)
-    edit_stage(path, "overlap", workers=3)
-    assert "workers = 3" in rp.plan(path)
-
-
-@pytest.mark.parametrize("workers", [0, -2, "4", 1.5, True, None])
-def test_bad_overlap_workers_stop_before_anything_runs(staged, workers):
-    path, repo = staged
-    edit_stage(path, "overlap", workers=workers)
-    with pytest.raises(rp.Stop, match=r"stages.overlap.workers is .*, expected a whole number >= 1"):
-        rp.run(path)
-    assert not (repo / "out" / "runs" / "test-run" / "clean").exists()
-
-
-def test_overlap_workers_need_an_overlap_stage_that_runs_from_settings(staged, tsai_outputs):
-    path, repo = staged
-    prev = repo / "out" / "earlier" / "overlap"
-    shutil.copytree(tsai_outputs["overlap"], prev)
-    set_stage(path, "overlap", {"mode": "adopt", "output": str(prev), "workers": 2})
-    with pytest.raises(rp.Stop, match="stages.overlap.workers sets the overlap job's workers"):
-        rp.run(path)
-
-
 def test_a_run_without_resume_does_not_tell_the_job_so(staged):
     path, repo = staged
     m = rp.run(path, to="clean")
