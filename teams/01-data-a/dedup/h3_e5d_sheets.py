@@ -18,7 +18,10 @@ STAGES
   load      each run's h3_candidates.csv and h3_docs.parquet (the run must be complete). Each pair is named by its
             configured language pair and put in that pair's order: side a is in the pair's first language
   sample    per language pair, coverage band and encoder: pairs at random (seeded), per_band per band split evenly
-            between the encoders that listed the pair's language pair; a pair already drawn is not drawn again
+            between the encoders that listed the pair's language pair; a pair already drawn is not drawn again.
+            With "buckets" instead: per language pair and bucket, n pairs from the bucket's bands in order: a band
+            whose pairs all fit is taken whole (every encoder's, each pair once, e.g. every qualifying pair), else the
+            rest is drawn at random, split evenly between the encoders and topped up from any of them
   controls  per language pair, n_controls pairs of known answer from the controls file (for example same-topic pages
             that are not translations), mixed in blind
   texts     each document's text from inputs, read as h3.py read it and checked against the run's character counts;
@@ -38,6 +41,10 @@ CONFIG (JSON; keys starting with "_" are comments)
   bands       coverage band edges, e.g. [0.3, 0.45, 0.6, 0.75, 1.0]: the bands either side of the 0.6 threshold
   per_band    pairs drawn per band; one count for every language pair, or a {language pair: count} map that names
               each pair (either order), e.g. {"sa-en": 20, "sa-hi": 20, "hi-en": 10, "or-en": 10}
+  buckets     instead of bands and per_band: {bucket: {"bands": [[low, high], ...], "n": count or per-pair map}}, e.g.
+              {"above": {"bands": [[0.6, 1.0], [0.45, 0.6]], "n": {"sa-en": 18, "sa-hi": 20, "hi-en": 25}},
+               "below": {"bands": [[0.3, 0.45]], "n": {"sa-en": 17, "sa-hi": 19, "hi-en": 25}}}
+              (a band holds coverage low <= c < high, and c = 1.0 when high is 1.0); the key then has a bucket column
   n_controls  controls per language pair; one count, or a map as for per_band
   readers, seed
 
@@ -45,13 +52,14 @@ WHAT IT WRITES (in out)
 =======================
   sheets/<pair>_reader<k>.csv  what reader k gets: item, text_1, text_2, translation, note (translation and note empty;
                                UTF-8 with a byte-order mark, so spreadsheets show the scripts)
-  readers_guide.md             what to write in translation; it goes to the readers with the sheets
-  key/<pair>_key.csv           for each item: source (candidate or control), band, the encoder it was drawn for, which
-                               side is text_1, both documents (pack, split, doc_id, lang), the control's expected label,
-                               and each encoder's coverage, cosines, signals and found_by (empty where it did not list
-                               the pair). Never shown to readers
+  readers_guide.md             what to answer for each item; it goes to the readers with the sheets
+  key/<pair>_key.csv           for each item: source (candidate or control), band (and bucket, with "buckets"), the
+                               encoder it was drawn for, which side is text_1, both documents (pack, split, doc_id,
+                               lang), the control's expected label, and each encoder's coverage, cosines, signals and
+                               found_by (empty where it did not list the pair). Never shown to readers
   key/sentences.parquet        the sentences shown, per item and side, for the sentence-threshold sweep
-  e5d_summary.json             counts per language pair, band and encoder (in the band, drawn, wanted), shortfalls,
+  e5d_summary.json             counts per language pair, band and encoder (in the band, drawn, wanted; with "buckets",
+                               per language pair, bucket and band: available, drawn per encoder), shortfalls,
                                the runs' sentence settings, the seed, the inputs' and outputs' sha256 and the stage
                                times: IDs and counts only
 
@@ -65,7 +73,7 @@ remain over the runs, the language pairs, bands and encoders (the strata), the r
 import sys
 sys.dont_write_bytecode = True   # write only to ./out/: no __pycache__ beside the scripts
 
-import argparse, json, platform, time  # noqa: E401,E402
+import argparse, json, platform, re, time  # noqa: E401,E402
 from pathlib import Path  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -81,7 +89,8 @@ from h3_signals import sentences_batch  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[3]   # teams/01-data-a/dedup/h3_e5d_sheets.py -> the repository root
 DEFAULTS = {"runs": {}, "inputs": "", "controls": "", "out": "out/e5d", "pairs": [],
-            "bands": [0.3, 0.45, 0.6, 0.75, 1.0], "per_band": 20, "n_controls": 10, "readers": 2, "seed": 20261122}
+            "bands": [0.3, 0.45, 0.6, 0.75, 1.0], "per_band": 20, "n_controls": 10, "readers": 2, "seed": 20261122,
+            "buckets": None}
 SENTENCE_SETTINGS = ("sentence_min_chars", "max_sentences")   # how h3.py split the sentences it scored
 SHEET_COLUMNS = ["item", "text_1", "text_2", "translation", "note"]
 SIDE = ("row", "id", "pack", "lang", "split", "sentences")          # h3_candidates.csv columns with _a and _b
@@ -90,23 +99,24 @@ SCORES = ("coverage", "doc_cosine", "mean_sentence_cosine", "length_ratio", "num
 STRINGS = ("id_a", "id_b", "pack_a", "pack_b", "lang_a", "lang_b", "split_a", "split_b", "found_by")
 DOC_COLUMNS = ("row", "doc_id", "pack", "lang", "split", "part", "row_in_part", "chars")
 CONTROL_COLUMNS = ("pair", "text_a", "text_b", "expected", "source")
-ITEM_COLUMNS = ["pair", "source", "band", "drawn_for", "pair_id", "expected", "control_source",
+ITEM_COLUMNS = ["pair", "source", "band", "bucket", "drawn_for", "pair_id", "expected", "control_source",
                 "pack_a", "split_a", "doc_id_a", "lang_a", "sentences_a", "text_a",
                 "pack_b", "split_b", "doc_id_b", "lang_b", "sentences_b", "text_b"]
 BOM = b"\xef\xbb\xbf"
-GUIDE = """# E5d: what to write in your sheet
+GUIDE = """# E5d: what to answer for each item
 
-Each row shows two texts, `text_1` and `text_2`, in two languages. Each text is the start of a web page: its
-sentences, one per line, with very short lines (menus, headings) left out.
+Each item shows two texts in two panels, `text_1` and `text_2`, in two languages. Each text is the start of a web
+page: its sentences, one per line, with very short lines (menus, headings) left out.
 
-In `translation`, write one word:
+For each item, answer one of these (in the viewer: the buttons, or the keys y, n and u; in a spreadsheet: the
+`translation` column):
 
 - `yes`: one text is a translation of the other. Most sentences of the shorter text have a sentence with the same
   meaning in the other one. A loose translation, or one text being longer, is still `yes`.
 - `no`: not a translation, even if both are about the same topic, event or person, or share names and numbers.
 - `unsure`: you cannot tell.
 
-Use `note` for anything else, for example "only the first half is translated".
+Use the note for anything else, for example "only the first half is translated".
 
 Read on your own. Do not compare with another reader, and do not look the texts up.
 """
@@ -170,8 +180,7 @@ def load_config(path):
             or len({frozenset(p) for p in pairs}) != len(pairs)):
         sys.exit("ERROR: pairs must be distinct [language, language] pairs, e.g. [[\"sa\", \"en\"]]")
     b = cfg["bands"]
-    number = lambda x: isinstance(x, (int, float)) and not isinstance(x, bool)
-    if (not isinstance(b, list) or len(b) < 2 or not all(number(x) and 0 <= x <= 1 for x in b)
+    if (not isinstance(b, list) or len(b) < 2 or not all(is_number(x) and 0 <= x <= 1 for x in b)
             or not all(np.diff(np.asarray(b, dtype=np.float64)) > 0)):
         sys.exit("ERROR: bands must be at least two increasing coverage values between 0 and 1")
     if type(cfg["readers"]) is not int or cfg["readers"] <= 0:
@@ -179,23 +188,58 @@ def load_config(path):
     if type(cfg["seed"]) is not int or cfg["seed"] < 0:
         sys.exit("ERROR: seed must be a nonnegative integer")
     names = {**{f"{b}-{a}": f"{a}-{b}" for a, b in pairs}, **{f"{a}-{b}": f"{a}-{b}" for a, b in pairs}}
-    for name, low in (("per_band", 1), ("n_controls", 0)):     # one count, or one per language pair
-        value = cfg[name]
-        if isinstance(value, dict):
-            named = [names.get(k) for k in value]
-            if None in named or len(set(named)) != len(named) or set(named) != set(names.values()):
-                sys.exit(f"ERROR: a {name} map must name each language pair of pairs once (either order): "
-                         f"{sorted(set(names.values()))}")
-            cfg[name] = {names[k]: v for k, v in value.items()}
-        if not all(type(v) is int and v >= low for v in (cfg[name].values() if isinstance(cfg[name], dict)
-                                                          else [cfg[name]])):
-            sys.exit(f"ERROR: {name} must be {'a positive' if low else 'a nonnegative'} integer, or a map of them")
+    cfg["per_band"] = per_pair(cfg["per_band"], names, 1, "per_band")
+    cfg["n_controls"] = per_pair(cfg["n_controls"], names, 0, "n_controls")
+    if cfg["buckets"] is not None:
+        if {"bands", "per_band"} & set(raw):
+            sys.exit("ERROR: buckets replace bands and per_band: give one or the other")
+        cfg["buckets"] = check_buckets(cfg["buckets"], names)
     return cfg
+
+
+def is_number(x):
+    return isinstance(x, (int, float)) and not isinstance(x, bool)
+
+
+def per_pair(value, names, low, label):
+    """One count for every language pair, or a {language pair: count} map naming each pair once (either order)."""
+    if isinstance(value, dict):
+        named = [names.get(k) for k in value]
+        if None in named or len(set(named)) != len(named) or set(named) != set(names.values()):
+            sys.exit(f"ERROR: a {label} map must name each language pair of pairs once (either order): "
+                     f"{sorted(set(names.values()))}")
+        value = {names[k]: v for k, v in value.items()}
+    if not all(type(v) is int and v >= low for v in (value.values() if isinstance(value, dict) else [value])):
+        sys.exit(f"ERROR: {label} must be {'a positive' if low else 'a nonnegative'} integer, or a map of them")
+    return value
+
+
+def check_buckets(value, names):
+    """{bucket: {"bands": [[low, high], ...], "n": count or per-pair map}}, checked; bands as floats."""
+    if not isinstance(value, dict) or not value:
+        sys.exit('ERROR: buckets must be a nonempty {bucket: {"bands": [[low, high], ...], "n": count}} map')
+    out = {}
+    for bucket, spec in value.items():                            # the buckets
+        if not isinstance(bucket, str) or not re.fullmatch(r"[a-z][a-z0-9_]*", bucket):
+            sys.exit(f"ERROR: bucket names must be lowercase words, not {bucket!r}")
+        if not isinstance(spec, dict) or set(spec) != {"bands", "n"}:
+            sys.exit(f'ERROR: bucket {bucket} needs exactly "bands" and "n"')
+        bands = spec["bands"]
+        if (not isinstance(bands, list) or not bands
+                or not all(isinstance(r, list) and len(r) == 2 and all(is_number(x) for x in r)
+                           and 0 <= r[0] < r[1] <= 1 for r in bands)):
+            sys.exit(f"ERROR: bucket {bucket}: bands must be [low, high] coverage ranges, 0 <= low < high <= 1")
+        out[bucket] = {"bands": [[float(lo), float(hi)] for lo, hi in bands],
+                       "n": per_pair(spec["n"], names, 0, f"bucket {bucket} n")}
+    return out
 
 
 def count(cfg, name, pair):
     """per_band or n_controls for one language pair."""
-    value = cfg[name]
+    return for_pair(cfg[name], pair)
+
+
+def for_pair(value, pair):
     return value[pair] if isinstance(value, dict) else value
 
 
@@ -250,8 +294,12 @@ def load_run(encoder, folder, pairs):
 
 
 def sample(runs, cfg, names, rng):
-    """The drawn pairs as (run, row of its table, band), and one count record per stratum."""
+    """The drawn pairs: (run, row of its table, band label, bucket label or None) per pair, one count record per
+    stratum, and the shortfalls."""
+    if cfg["buckets"] is not None:
+        return sample_buckets(runs, cfg, names, rng)
     edges, last = cfg["bands"], len(cfg["bands"]) - 2
+    labels = np.array([f"{a:.2f}-{b:.2f}" for a, b in zip(edges, edges[1:])], dtype=object)
     run_ix, row_ix, band_ix, strata = [], [], [], []
     taken = pa.array([], pa.string())
     for k, name in enumerate(names):                              # strata: language pair, band, encoder
@@ -274,7 +322,77 @@ def sample(runs, cfg, names, rng):
                 strata.append({"pair": name, "band": f"{lo:.2f}-{hi:.2f}", "encoder": r["name"],
                                "in_band": int(inband.sum()), "drawn": len(pick), "wanted": per})
     cat = lambda xs: np.concatenate(xs).astype(np.int64) if xs else np.zeros(0, np.int64)
-    return cat(run_ix), cat(row_ix), cat(band_ix), strata
+    band_ix = cat(band_ix)
+    return (cat(run_ix), cat(row_ix), labels[band_ix], np.full(len(band_ix), None, dtype=object), strata,
+            [s for s in strata if s["drawn"] < s["wanted"]])
+
+
+def sample_buckets(runs, cfg, names, rng):
+    """sample() with "buckets": per language pair and bucket, n pairs from the bucket's bands, in order. A band whose
+    free pairs all fit is taken whole, every encoder's, each pair once; otherwise the rest is drawn at random, split
+    evenly between the encoders that listed the language pair, then topped up from any of them."""
+    picks, strata, shortfalls = [], [], []
+    state = {"taken": pa.array([], pa.string())}
+
+    def free_rows(r, k, lo, hi):
+        cov = r["coverage"]
+        inband = (r["pair"] == k) & (cov >= lo) & ((cov < hi) | ((hi >= 1.0) & (cov <= hi)))
+        return np.flatnonzero(inband & ~bools(pc.is_in(r["pair_id"], value_set=state["taken"])))
+
+    def take(e, rows, label, bucket):
+        state["taken"] = pa.concat_arrays([state["taken"], runs[e]["pair_id"].take(pa.array(rows, pa.int64()))])
+        picks.append((e, rows, label, bucket))
+        return len(rows)
+
+    for k, name in enumerate(names):                              # the language pairs
+        encs = [e for e, r in enumerate(runs) if (r["pair"] == k).any()]
+        if not encs:
+            continue
+        for bucket, spec in cfg["buckets"].items():               # the buckets, in config order
+            want = left = for_pair(spec["n"], name)
+            for lo, hi in spec["bands"]:                          # the bucket's bands, in order
+                label = f"{lo:.2f}-{hi:.2f}"
+                free = {e: free_rows(runs[e], k, lo, hi) for e in encs}
+                ids = pa.concat_arrays([runs[e]["pair_id"].take(pa.array(free[e], pa.int64())) for e in encs])
+                available = pc.count_distinct(ids).as_py() if len(ids) else 0
+                got = {runs[e]["name"]: 0 for e in encs}
+                wanted = left
+                if left and available <= left:                    # the whole band, each pair once
+                    for e in encs:
+                        got[runs[e]["name"]] += take(e, free_rows(runs[e], k, lo, hi), label, bucket)
+                elif left:                                        # a random draw, split between the encoders
+                    per = -(-left // len(encs))
+                    for e in encs:
+                        rows = free_rows(runs[e], k, lo, hi)
+                        n = min(per, len(rows), left - sum(got.values()))
+                        pick = np.sort(rng.choice(rows, size=n, replace=False)) if n else rows[:0]
+                        got[runs[e]["name"]] += take(e, pick, label, bucket)
+                    rest = left - sum(got.values())
+                    if rest:                                      # top up from any encoder's free pairs
+                        rows = [free_rows(runs[e], k, lo, hi) for e in encs]
+                        enc = np.concatenate([np.full(len(r), e) for r, e in zip(rows, encs)]).astype(np.int64)
+                        row = np.concatenate(rows).astype(np.int64)
+                        pid = pa.concat_arrays([runs[e]["pair_id"].take(pa.array(r, pa.int64()))
+                                                for r, e in zip(rows, encs)])
+                        code = np.asarray(pc.index_in(pid, value_set=pc.unique(pid)), dtype=np.int64)
+                        first = np.sort(np.unique(code, return_index=True)[1])   # each pair's first listing
+                        pick = np.sort(rng.choice(first, size=min(rest, len(first)), replace=False))
+                        for e in encs:                            # the encoders the top-up came from
+                            mine = row[pick[enc[pick] == e]]
+                            if len(mine):
+                                got[runs[e]["name"]] += take(e, mine, label, bucket)
+                n_drawn = sum(got.values())
+                strata.append({"pair": name, "bucket": bucket, "band": label, "available": available,
+                               "wanted": wanted, "drawn": n_drawn, "drawn_by_encoder": got})
+                left -= n_drawn
+            if left:
+                shortfalls.append({"pair": name, "bucket": bucket, "wanted": want, "drawn": want - left})
+    n = [len(p[1]) for p in picks]
+    run_ix = np.repeat([p[0] for p in picks], n).astype(np.int64) if picks else np.zeros(0, np.int64)
+    row_ix = np.concatenate([p[1] for p in picks]).astype(np.int64) if picks else np.zeros(0, np.int64)
+    band = np.repeat(np.array([p[2] for p in picks], dtype=object), n) if picks else np.zeros(0, dtype=object)
+    bucket = np.repeat(np.array([p[3] for p in picks], dtype=object), n) if picks else np.zeros(0, dtype=object)
+    return run_ix, row_ix, band, bucket, strata, shortfalls
 
 
 def read_documents(run, rows, parts):
@@ -317,9 +435,8 @@ def shown(texts, settings):
     return lists, pc.binary_join(lists, "\n")
 
 
-def candidate_items(runs, run_ix, row_ix, band_ix, cfg, names, parts, settings):
-    """One row per drawn pair: its documents, the sentences shown and the band label; in run order."""
-    labels = [f"{a:.2f}-{b:.2f}" for a, b in zip(cfg["bands"], cfg["bands"][1:])]
+def candidate_items(runs, run_ix, row_ix, band, bucket, names, parts, settings):
+    """One row per drawn pair: its documents, the sentences shown, its band and bucket labels; in run order."""
     pieces = []
     for e, run in enumerate(runs):                                # the runs
         at = np.flatnonzero(run_ix == e)
@@ -332,7 +449,7 @@ def candidate_items(runs, run_ix, row_ix, band_ix, cfg, names, parts, settings):
         docs, n = run["docs"], len(at)
         piece = {"pair": pa.array(names, pa.string()).take(pa.array(ints(t, "pair"))),
                  "source": const("candidate", n),
-                 "band": pa.array(labels, pa.string()).take(pa.array(band_ix[at], pa.int64())),
+                 "band": pa.array(band[at], pa.string()), "bucket": pa.array(bucket[at], pa.string()),
                  "drawn_for": const(run["name"], n), "pair_id": column(t, "pair_id"),
                  "expected": pa.nulls(n, pa.string()), "control_source": pa.nulls(n, pa.string())}
         for s, r in (("a", ra), ("b", rb)):
@@ -373,7 +490,7 @@ def control_items(cfg, names, rng, settings):
         n, (x, y) = len(pick), cfg["pairs"][k]
         none = pa.nulls(n, pa.string())
         piece = {"pair": const(name, n), "source": const("control", n), "band": const("control", n),
-                 "drawn_for": none, "pair_id": none, "expected": pc.cast(column(c, "expected"), pa.string()),
+                 "bucket": const("control", n) if cfg["buckets"] is not None else none, "drawn_for": none, "pair_id": none, "expected": pc.cast(column(c, "expected"), pa.string()),
                  "control_source": pc.cast(column(c, "source"), pa.string())}
         for s, lang in (("a", x), ("b", y)):
             piece[f"pack_{s}"], piece[f"split_{s}"], piece[f"doc_id_{s}"] = none, none, none
@@ -416,9 +533,9 @@ def main(argv=None):
     found = h3.find_parts(REPO / cfg["inputs"])
     parts = {"keys": pa.array([f"{s}\t{p}" for s, p, _ in found]), "paths": [path for _, _, path in found]}
     tick("load")
-    run_ix, row_ix, band_ix, strata = sample(runs, cfg, names, rng)
+    run_ix, row_ix, band, bucket, strata, shortfalls = sample(runs, cfg, names, rng)
     tick("sample")
-    pieces = candidate_items(runs, run_ix, row_ix, band_ix, cfg, names, parts, settings)
+    pieces = candidate_items(runs, run_ix, row_ix, band, bucket, names, parts, settings)
     controls, control_counts = control_items(cfg, names, rng, settings)
     tick("texts")
     rows = pieces + controls
@@ -448,8 +565,10 @@ def main(argv=None):
             for r in range(1, cfg["readers"] + 1):                # the readers
                 write_csv(out / "sheets" / f"{name}_reader{r}.csv", sheet.take(pa.array(rng.permutation(n))),
                           bom=True)
-            key = {"item": item, "source": column(sub, "source"), "band": column(sub, "band"),
-                   "drawn_for": column(sub, "drawn_for"), "expected": column(sub, "expected"),
+            key = {"item": item, "source": column(sub, "source"), "band": column(sub, "band")}
+            if cfg["buckets"] is not None:                       # the per-band mode's key stays as it was
+                key["bucket"] = column(sub, "bucket")
+            key |= {"drawn_for": column(sub, "drawn_for"), "expected": column(sub, "expected"),
                    "control_source": column(sub, "control_source"),
                    "text_1_side": pc.if_else(flip, pa.scalar("b"), pa.scalar("a"))}
             for s in "ab":
@@ -471,7 +590,7 @@ def main(argv=None):
         "runs": {r["name"]: {"folder": str(r["folder"].relative_to(REPO)), "sha256": r["sha256"],
                              "pairs_listed": {n: int((r["pair"] == k).sum()) for k, n in enumerate(names)},
                              "other_language_pairs_dropped": r["dropped"]} for r in runs},
-        "strata": strata, "shortfalls": [s for s in strata if s["drawn"] < s["wanted"]],
+        "strata": strata, "shortfalls": shortfalls,
         "controls": control_counts,
         "controls_sha256": h3.sha256_file(REPO / cfg["controls"]) if control_counts else None,
         "items": items_total, "readers": cfg["readers"], "sentence_settings": settings,
@@ -484,7 +603,8 @@ def main(argv=None):
         ctl = control_counts.get(name, {}).get("drawn", 0)
         print(f"{name}: {drawn} candidates and {ctl} controls -> {items_total.get(name, 0)} items, "
               f"{cfg['readers']} sheets", flush=True)
-    print(f"e5d sheets: {sum(items_total.values())} items, {len(summary['shortfalls'])} strata short "
+    print(f"e5d sheets: {sum(items_total.values())} items, {len(summary['shortfalls'])} "
+          f"{'buckets' if cfg['buckets'] is not None else 'strata'} short "
           f"({summary['wall_seconds']} s); {out.relative_to(REPO)}", flush=True)
 
 

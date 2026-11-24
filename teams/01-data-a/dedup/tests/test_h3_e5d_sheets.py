@@ -114,6 +114,7 @@ def setup(tmp_path, monkeypatch, **cfg):
     config = {"runs": {"labse": "out/runs/labse", "bge": "out/runs/bge"}, "inputs": "inputs",
               "controls": "controls.parquet", "out": "out/e5d", "pairs": [["sa", "en"], ["hi", "en"]],
               "per_band": 4, "n_controls": 3, "readers": 2, "seed": 7, **cfg}
+    config = {k: v for k, v in config.items() if v is not None}     # a None override leaves the key out
     path = tmp_path / "e5d.json"
     path.write_text(json.dumps(config), encoding="utf-8")
     return path, docs
@@ -189,6 +190,81 @@ def test_each_language_pair_can_have_its_own_sample_size(tmp_path, monkeypatch):
     assert len(hi) == 4 and all(x["source"] == "candidate" for x in hi)                   # 1 per band, no controls
     assert sum(x["source"] == "control" for x in key_rows(tmp_path, "sa-en")) == 2
     assert summary["config"]["per_band"] == {"sa-en": 4, "hi-en": 1}                       # named in pairs' order
+
+
+ABOVE, NEAR, BELOW = [[0.6, 1.0]], [[0.45, 0.6]], [[0.3, 0.45]]
+
+
+def buckets(above, below, above_bands=ABOVE + NEAR):
+    return {"per_band": None, "buckets": {"above": {"bands": above_bands, "n": above},
+                                          "below": {"bands": BELOW, "n": below}}}
+
+
+def doc_number(row):
+    return int(row["doc_id_a"][-2:])
+
+
+def test_buckets_take_every_qualifying_pair_then_fill_from_near_the_cut(tmp_path, monkeypatch):
+    path, _ = setup(tmp_path, monkeypatch, n_controls=0,
+                    **buckets(above={"sa-en": 12, "hi-en": 8}, below={"sa-en": 0, "hi-en": 2}))
+    run(path)
+    hi = key_rows(tmp_path, "hi-en")
+    above = [r for r in hi if r["bucket"] == "above"]
+    assert len(above) == 8 and len(hi) == 10
+    assert {doc_number(r) for r in above if r["band"] == "0.60-1.00"} == set(range(5, 12))    # all 7 qualifying
+    assert {doc_number(r) for r in above if r["band"] == "0.45-0.60"} <= {3, 4}
+    assert sum(r["band"] == "0.45-0.60" for r in above) == 1
+    below = [r for r in hi if r["bucket"] == "below"]
+    assert len(below) == 2 and {doc_number(r) for r in below} <= {0, 1, 2}
+    assert {r["band"] for r in below} == {"0.30-0.45"}
+    sa = key_rows(tmp_path, "sa-en")                              # LaBSE qualifies 5-11, BGE-M3 0-7: all 12, once
+    assert sorted(doc_number(r) for r in sa) == list(range(12))
+    assert {doc_number(r) for r in sa if r["drawn_for"] == "labse"} == set(range(5, 12))
+    assert {doc_number(r) for r in sa if r["drawn_for"] == "bge"} == set(range(0, 5))
+    summary = json.loads((tmp_path / "out/e5d/e5d_summary.json").read_text())
+    assert summary["shortfalls"] == []
+
+
+def strata_by_bucket(tmp_path):
+    strata = json.loads((tmp_path / "out/e5d/e5d_summary.json").read_text())["strata"]
+    return {(s["pair"], s["bucket"]): s for s in strata}
+
+
+def test_a_bucket_draw_is_split_between_the_encoders(tmp_path, monkeypatch):
+    path, _ = setup(tmp_path, monkeypatch, n_controls=0,
+                    **buckets(above={"sa-en": 4, "hi-en": 0}, below=0, above_bands=ABOVE))
+    run(path)
+    s = strata_by_bucket(tmp_path)[("sa-en", "above")]
+    assert s["available"] == 12 and s["drawn_by_encoder"] == {"labse": 2, "bge": 2}
+    rows = key_rows(tmp_path, "sa-en")
+    assert len(rows) == 4 == len({doc_number(r) for r in rows})
+
+
+def test_a_bucket_tops_up_from_the_encoder_that_has_pairs(tmp_path, monkeypatch):
+    path, _ = setup(tmp_path, monkeypatch, n_controls=0, **buckets(above=0, below={"sa-en": 2, "hi-en": 0}))
+    run(path)
+    s = strata_by_bucket(tmp_path)[("sa-en", "below")]           # only LaBSE scores sa-en pairs in 0.30-0.45
+    assert s["available"] == 3 and s["drawn_by_encoder"] == {"labse": 2, "bge": 0}
+    assert {doc_number(r) for r in key_rows(tmp_path, "sa-en")} <= {0, 1, 2}
+
+
+def test_a_short_bucket_is_reported(tmp_path, monkeypatch):
+    path, _ = setup(tmp_path, monkeypatch, n_controls=0,
+                    **buckets(above={"sa-en": 12, "hi-en": 10}, below=0))
+    run(path)
+    summary = json.loads((tmp_path / "out/e5d/e5d_summary.json").read_text())
+    assert summary["shortfalls"] == [{"pair": "hi-en", "bucket": "above", "wanted": 10, "drawn": 9}]
+
+
+def test_bucket_keys_label_the_controls_and_per_band_keys_stay_as_they_were(tmp_path, monkeypatch):
+    path, _ = setup(tmp_path, monkeypatch, **buckets(above=4, below=2))
+    run(path)
+    rows = key_rows(tmp_path, "sa-en")
+    assert {r["bucket"] for r in rows if r["source"] == "control"} == {"control"}
+    assert {r["bucket"] for r in rows if r["source"] == "candidate"} <= {"above", "below"}
+    path, _ = setup(tmp_path, monkeypatch)                        # bands and per_band: no bucket column
+    run(path)
+    assert "bucket" not in key_rows(tmp_path, "sa-en")[0]
 
 
 def test_a_pair_both_encoders_listed_is_read_once_with_both_scores(tmp_path, monkeypatch):
@@ -330,6 +406,14 @@ def test_an_incomplete_run_is_refused(tmp_path, monkeypatch):
     ({"per_band": {"sa-en": 4, "hi-en": 0}}, "per_band must be a positive integer, or a map"),
     ({"n_controls": {"sa-en": -1, "hi-en": 1}}, "n_controls must be a nonnegative integer, or a map"),
     ({"max_sentences": 16}, "unknown keys"),                     # taken from the runs, never the sheet config
+    ({"buckets": {"above": {"bands": [[0.6, 1.0]], "n": 2}}}, "buckets replace bands and per_band"),
+    ({"per_band": None, "buckets": {}}, "buckets must be a nonempty"),
+    ({"per_band": None, "buckets": {"Above": {"bands": [[0.6, 1.0]], "n": 2}}}, "bucket names must be lowercase"),
+    ({"per_band": None, "buckets": {"above": {"bands": [[0.6, 1.0]]}}}, 'needs exactly "bands" and "n"'),
+    ({"per_band": None, "buckets": {"above": {"bands": [[0.6, 0.6]], "n": 2}}}, "bands must be \\[low, high\\]"),
+    ({"per_band": None, "buckets": {"above": {"bands": [], "n": 2}}}, "bands must be \\[low, high\\]"),
+    ({"per_band": None, "buckets": {"above": {"bands": [[0.6, 1.0]], "n": {"sa-en": 2}}}},
+     "a bucket above n map must name each language pair"),
     ({"surprise": 1}, "unknown keys")])
 def test_bad_configs_are_refused(tmp_path, monkeypatch, change, message):
     path, _ = setup(tmp_path, monkeypatch, **change)

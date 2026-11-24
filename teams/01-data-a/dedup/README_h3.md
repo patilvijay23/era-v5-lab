@@ -171,7 +171,20 @@ translation or not. For each language pair it draws pairs from every coverage ba
 For the Sanskrit pairs it pools the LaBSE and BGE-M3 candidates (theschoolofai/era-v5-lab#666; TSAI on
 theschoolofai/era-v5-lab#626), so a pair is read once and the key holds both encoders' scores. It mixes in controls of
 known answer. `per_band` (pairs per band) and `n_controls` are one count, or one per language pair, so the Sanskrit
-pairs can get larger sheets than Hindi and Odia. A sheet shows only the item and the two texts, as the sentences `h3.py`
+pairs can get larger sheets than Hindi and Odia.
+
+With `buckets` in place of `bands` and `per_band`, each language pair gets a set number of pairs per bucket, taken from
+the bucket's coverage bands in order: a band whose pairs all fit is taken whole, from every encoder, each pair once;
+otherwise the rest is drawn at random, split between the encoders. E5d's layout (50 items per sheet, with the controls)
+is an "above" bucket that takes every qualifying pair, then fills from 0.45–0.6, and a "below" bucket from 0.30–0.45:
+
+| Language pair | Above | Below | Known translations | Not translations |
+|---|---|---|---|---|
+| sa-en | 18 | 17 | 5 | 10 |
+| sa-hi | 20 | 19 | 1 | 10 |
+| hi-en | 25 | 25 | none | none |
+
+A sheet shows only the item and the two texts, as the sentences `h3.py`
 scored: `sentence_min_chars` and `max_sentences` come from the runs' `h3_summary.json`, and runs that split sentences
 differently are refused. The sides are swapped at random and each reader's items are in their own order. Scores,
 encoders, packs and doc_ids are only in the key. The sheets hold document text and stay in `out/`.
@@ -297,8 +310,8 @@ needs the page's token.
 python3 teams/01-data-a/dedup/view_e5d_sheets.py --sheets ../sheets --name "Your Name"
 ```
 
-Checked by hand on two FLORES+ test sheets (sa-en, sa-hi reader 1): answers by key, save, reload with an unsaved
-answer, and switching sheets.
+Run in a browser with Claude Code on two FLORES+ test sheets (sa-en, sa-hi reader 1): answers by key, save, reload
+with an unsaved answer, and switching sheets.
 
 ## Harm check with planted cases (task 3.5)
 
@@ -404,14 +417,17 @@ python3 -B -m pytest teams/01-data-a/dedup/tests/test_h3_e5d_sheets.py teams/01-
 ```
 
 ```text
-...........................................                              [100%]
-43 passed in 3.38s
+.......................................................                  [100%]
+55 passed in 2.51s
 ```
 
 They check that a sheet has only its five columns and no doc_id, pack or score. They also check:
 
 - every reader gets every item, in their own order;
 - pairs are drawn from bands on both sides of the threshold;
+- with buckets: every qualifying pair is taken once, from either encoder, then the bucket is filled from the next band;
+  a draw is split between the encoders and topped up from one that has pairs; a short bucket is reported; the key
+  labels each item's bucket (controls: "control"), and without buckets it has no bucket column;
 - a pair both encoders listed is read once with both scores, even when the runs list its sides in the other order;
 - side a is in the pair's first language;
 - the texts are the sentences `h3.py` scored, split with the runs' settings, on the sides the key names;
