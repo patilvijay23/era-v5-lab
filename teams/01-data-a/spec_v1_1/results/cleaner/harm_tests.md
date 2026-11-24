@@ -1,31 +1,36 @@
 # clean() harm tests: spec v1.1
 
-## Fresh validation: 23 Nov 2026
+## Current validation: full rerun after merged #88
 
-Rebuilt `spec_v1_1/clean.py` from `sheets/specv1_1.md` and `build/f1_rule.py`.
-The rebuild is byte-identical to the input cleaner: SHA-256
-`4b5e46ba1d1d347d3650e3a060abc8b95e1dd9ec67970b2704c2c50ac0678755`.
+Rebuilt `clean.py` from `sheets/specv1_1.md` and `build/f1_rule.py` on
+`g1-w4-pipeline` at merge commit `31015c56a9b0b07666693f74d8212e7271981fd7`.
+The rebuild is byte-identical to the merged cleaner, SHA-256
+`d275556ee87a259b05ac5e474ed40b569c2e821aaaffa99d5d07035e40948989`. The pipeline and tokenizer-sample job configs already pin these bytes.
+This replaces the previous current harm summary and its canonical evidence in
+`harm_2026_11_23/`; the directory name is retained for existing links.
 
-The run used the 38 original pack Parquets provided locally, Data A gold in
-`teams/01-data-a/gold`, and Data B gold in `teams/02-data-b/gold`. Each applicable
-rule was tested alone, followed by the full `clean()` pipeline, on each pack's
-own gold set using `harmtest/harm_test.py`'s APIs. Data B packs also used
-`tools/harm_test_indic.py`'s execution, verdict and Unicode-audit APIs, preserving
-pack/language/URL metadata through the adapter. No gold IDs were excluded.
-This run does not repeat the historical whole-pack out-of-scope checks.
+Tested all 38 original 500-document pack Parquets from
+`/mnt/c/Users/heman/Documents/vijay/erav5-lab-other-files/packs`, with Data A gold
+in `teams/01-data-a/gold` and Data B gold in `teams/02-data-b/gold`. Each applicable
+rule was tested alone, then the full `clean()` pipeline, using Data A's
+`harmtest/harm_test.py` APIs. Indic and code-adjacent gold also used Data B's
+`tools/harm_test_indic.py` execution/verdict/Unicode-audit APIs with pack, language
+and URL metadata preserved. No gold IDs were excluded.
 
-- **4,768 gold documents across 33 testable packs.** Of the 31 supported packs,
-  **27 PASS and 4 FAIL**. Two other testable packs, `cadj-commits` and
-  `ind-ta-fw2`, pass through unchanged and have no cleaning rules; their PASS
-  is not evidence of implemented cleaning coverage.
-- **Five NOT TESTABLE:** gold CSVs are missing for `cadj-notebooks`,
+- **4,768 gold documents across 33 testable packs.** Of **32 supported packs,
+  28 PASS and four FAIL**. `cadj-commits` is now supported: shared F1 and full
+  pipeline both PASS, **zero of 413 gold documents changed or dropped**.
+- `ind-ta-fw2` remains the only testable passthrough pack: 218 gold documents,
+  zero changes/drops. Its PASS is not evidence of implemented cleaning coverage.
+- **Five NOT TESTABLE**, because gold CSVs are missing: `cadj-notebooks`,
   `cadj-stackexchange`, `ind-ml-fw2`, `ind-or-fw2`, `ind-ta-sangraha-s`.
-- No rule execution errors, Indic joiner-count violations or Unicode normal-form
-  violations were observed.
-- The amended English `DA-F1-005` on all four English packs, shared F1 on all
-  six code packs, and Sanskrit `DB-B4-004` each **PASS with zero gold documents
-  changed or dropped**.
-- Cleaner unit/regression suite: **1,915 passed, 9 subtests passed**.
+- All previous full-pipeline gold outcomes, including every affected ID, are
+  identical. Every previously applicable rule's gold result is unchanged;
+  the newly applicable `cadj-commits` shared F1 touches zero gold documents.
+- No rule execution errors, Indic joiner-count violations or normal-form
+  violations. The five scoped #86 guards, English F1, code shared F1 and Sanskrit
+  `DB-B4-004` continue to touch zero gold documents.
+- **1,952 cleaner tests and nine subtests PASS; 125 clean-job/preparation tests PASS.**
 
 | Pack failing the raw full-pipeline harm limit | Gold | Changed | Dropped |
 |---|---:|---:|---:|
@@ -34,31 +39,69 @@ This run does not repeat the historical whole-pack out-of-scope checks.
 | sci-finepdfs | 202 | 4 | 1 |
 | ind-te-sangraha-v | 80 | 2 | 0 |
 
-The 11 affected IDs are exactly those listed in the historical report below.
-That historical report classifies ten as gold contradictions and one as a
-short-document false positive. This run reproduces their identities; it does
-not constitute a fresh human adjudication or waive the four raw failures.
-The changed Bengali gold set has 145 documents, compared with 137 in the
-historical report; per-input hashes are recorded for the fresh run.
+The same 11 affected IDs appear in the historical report below. Its classification
+of ten gold contradictions and one short-document false positive is historical;
+this rerun does not supply fresh human adjudication or waive the four raw failures.
 
-`run_harm_suite.py` was attempted but cannot run: it requires the absent legacy
-`teams/01-data-a/spec/spec_v1.md` inventory, not the current executable sheet.
-The current cleaner was tested through the APIs above instead. These results
-cover the current cleaner, not activation of #86's separate proposal cards,
-production-scale throughput, or a full MinHash/sharding integration run.
+### cadj-commits email-only boundary checks
 
-To reproduce the API-based run from the repository root (writes to a new
-output folder; exits nonzero for failures or untestable packs):
+Fresh checks on all three original code-adjacent packs (500 documents each):
+`cadj-commits` has **40 email-only changes, zero drops, zero other changes and
+zero second-pass changes**. `cadj-notebooks` and `cadj-stackexchange` remain
+unchanged. The latter two have no gold; these checks do not establish gold harm
+coverage for them. Phone numbers, addresses and LinkedIn profiles remain outside
+this amendment. See [fresh pack checks](harm_2026_11_23/summary.json) (`cadj_week1_checks`).
+
+#88's earlier submitted sample-v0 evidence (74,753 commits documents and its
+37-pack prefix comparison) is preserved separately in
+[its source report](harm_2026_11_24_cadj_commits/summary.json). That larger sample
+run was not repeated as part of this fresh full-gold validation.
+
+### Scoped #86 amendments retained
+
+Five scoped preservation amendments were extracted from
+[#86](https://github.com/patilvijay23/era-v5-lab/pull/86), source commit
+`d9b2efe8689fee5abdc26a523d847018a732d344`, into the existing spec v1.1 rules:
+
+| Active rule | Extracted change | Source card |
+|---|---|---|
+| `DA-A6-001` | Preserve consecutive Cyrillic runs and Go test/testdata URLs | `DA-A6-004` |
+| `DA-C2-004` | Require a line-start repeated lead; cut partial copies only at blank-line boundaries | `DA-C2-011` |
+| `DA-C2-003` | Exclude fenced Markdown code from repeated-line removal | `DA-C2-009/010`, fence subset |
+| `DA-C3-003` | Recognize closing `”`, `’`, `»` as end punctuation | `DA-C3-009`, punctuation subset |
+| `DA-F1-005` | Preserve digits within a DOI; retain the existing binary-value guard | `DA-F1-007/009`, DOI subset |
+
+Those amendments retain their rule IDs, order and pack scopes. #88 subsequently
+adds `cadj-commits` to shared F1 with an empty `code-adjacent` pipeline. Closing punctuation
+uses the existing four-English-pack scope consistently with straight quotes;
+the source card's long-prose trimming is not adopted. Numeric-table heuristics,
+year-run exemptions, broader phone/contact policy, licence removal and the
+remaining proposal cards are deferred. #86 is not merged by this extraction.
+
+
+### Reproduction and limitations
 
 ```bash
-python teams/01-data-a/spec_v1_1/results/cleaner/harm_2026_11_23/run_current_harm.py --packs <original-packs-folder> --out out/harm-rerun
+python teams/01-data-a/spec_v1_1/scripts/run_current_harm.py --packs <original-packs-folder> --out out/harm-rerun
 ```
 
-Evidence (IDs, counts and hashes only): [summary CSV](harm_2026_11_23/summary.csv),
-[provenance and coverage](harm_2026_11_23/summary.json),
-[per-pack/per-rule reports](harm_2026_11_23/reports.json),
-[run log](harm_2026_11_23/run.log), [rebuild log](harm_2026_11_23/rebuild.log),
-[legacy-runner limitation](harm_2026_11_23/legacy-suite.log).
+The command exits nonzero for the four failures and five untestable packs.
+`harmtest/run_harm_suite.py` was retried and still cannot run because its legacy
+`teams/01-data-a/spec/spec_v1.md` inventory is absent; the current cleaner was
+tested using the existing Data A and Data B APIs above.
+
+The [19,000-document comparison](harm_2026_11_23/comparison.json) is historical
+pre-#88 evidence comparing `4b5e46ba…` with `aa1f8e53…`; it is not a comparison of
+the current `d275556e…` cleaner. Whole-pack out-of-scope checks for every rule,
+production throughput and MinHash/sharding integration were not rerun here.
+H3 remains report-only.
+
+Fresh evidence: [coverage/provenance and test counts](harm_2026_11_23/summary.json),
+[summary CSV](harm_2026_11_23/summary.csv),
+[per-pack/per-rule results](harm_2026_11_23/reports.json),
+and [rebuild](harm_2026_11_23/rebuild.txt). Console logs are kept outside the
+commit, consistent with the branch cleanup; the missing legacy inventory and
+its execution limitation are recorded in the structured summary above.
 
 ## Historical validation: 17 Nov 2026
 
