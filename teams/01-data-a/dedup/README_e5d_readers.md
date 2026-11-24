@@ -106,7 +106,7 @@ languages well enough for this pair.
 **Use the note** for anything you want to tell us. For example: "only the first half is translated" or "the Hindi
 text is a summary, not a translation".
 
-Some pairs are added on purpose so that we already know the answer. Answer them like any other pair.
+Some files include a few pairs whose answer we already know. Answer them like any other pair.
 
 ## Moving around
 
