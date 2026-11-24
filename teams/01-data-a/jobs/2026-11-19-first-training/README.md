@@ -54,13 +54,15 @@ After TSAI stages the pinned offline LaBSE model, use the shard metadata in `app
 provenance) to generate the pinned run config without hand-copying hashes or part counts:
 
 ```bash
-python -I teams/01-data-a/jobs/2026-11-19-first-training/prepare_run.py --bundle out/first-training-inputs --input-root /path/to/raw --tokenizer /path/to/p1536/tokenizer.json --f2-workers 30 --run-id first-training-v1
+python -I teams/01-data-a/jobs/2026-11-19-first-training/prepare_run.py --bundle out/first-training-inputs --input-root /path/to/raw --tokenizer /path/to/p1536/tokenizer.json --clean-workers 16 --overlap-workers 12 --f2-workers 30 --run-id first-training-v1
 ```
 
 The generator materializes `out/first-training-inputs/pack_metadata.json` from
 `approved_inputs.json`; there is no second committed table. `--pack-table` can
-optionally select an explicit table, whose licences are checked against the scope. `--f2-workers` defaults
-to 1; choose 30 only on a host with enough CPU and RAM (the rehearsal used 32 vCPU).
+optionally select an explicit table, whose licences are checked against the scope. The three worker counts have no
+default and must be given; the values above are for the job host (32 vCPU, 64 GiB): `--clean-workers` 16 (parts cleaned at
+once, about 0.5 GB each), `--overlap-workers` 12 (MinHash signature processes, up to about 3 GB each on the largest code
+parts; the settings files say 0, which would be every core), `--f2-workers` 30 (the fingerprint set is shared).
 The generator checks the published LaBSE weight/config sizes and SHA256 before
 writing `run.json`; model revision and staging commands are in the job request.
 
@@ -79,6 +81,8 @@ and H3 requirements agree on NumPy 2.4.3 and PyArrow 23.0.1.
 | `stages.shards.packs` | All allowed IDs, or omit to select all |
 | `stages.shards.dataset_version` | `corpus-v1` (fixed by `prepare_run.py`; independent of `--run-id`) |
 | `stages.reconcile` | Enabled |
+| `stages.clean.workers` | Selected with `--clean-workers` |
+| `stages.overlap.workers` | Selected with `--overlap-workers` |
 | `stages.f2.workers` | Selected with `--f2-workers` |
 | `stages.shards.pack_table` | Generated `out/first-training-inputs/pack_metadata.json` |
 

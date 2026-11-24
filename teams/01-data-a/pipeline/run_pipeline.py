@@ -32,7 +32,7 @@ A run stage names a "settings" file (settings only, no paths) and the runner wor
 gets a copy of its settings with the path keys filled in (clean: input_root from "input", output_root, and the input set's
 description from the stage: manifest, manifest_sha256, expected_parts, sample; overlap/H3: inputs, out; dedup: results, inputs,
 out), written to <run>/cfg/<stage>.json and passed with --config. The clean stage's manifest defaults to sample_manifest.json in
-its input folder, and its sha256 must equal manifest_sha256; its parts must match expected_parts and add up to its total_docs (clean_manifest.py: --plan checks it, and the job again when it starts). "script" replaces the default script (for clean: pipeline/clean_job.py, which loads the cleaner its settings file names and pins), and may be a list (the script, then the arguments that go before --config: a script run through a wrapper; the manifest then records the sha256 of both); clean also takes "resume": true, to continue an interrupted clean job in its folder (the job verifies the parts it finished; logs/clean.log is appended to); clean also takes "workers": N, how many parts the clean job cleans at once (it replaces workers in the settings file, pipeline/clean.json; only for a clean stage run from settings); "settings_sha256" pins the settings file
+its input folder, and its sha256 must equal manifest_sha256; its parts must match expected_parts and add up to its total_docs (clean_manifest.py: --plan checks it, and the job again when it starts). "script" replaces the default script (for clean: pipeline/clean_job.py, which loads the cleaner its settings file names and pins), and may be a list (the script, then the arguments that go before --config: a script run through a wrapper; the manifest then records the sha256 of both); clean also takes "resume": true, to continue an interrupted clean job in its folder (the job verifies the parts it finished; logs/clean.log is appended to); clean also takes "workers": N, how many parts the clean job cleans at once (it replaces workers in the settings file, pipeline/clean.json; only for a clean stage run from settings); overlap also takes "workers": N, the MinHash script's signature processes (it replaces workers in its settings file, which says 0: every core; only for an overlap stage run from settings); "settings_sha256" pins the settings file
 (checked, and the manifest records the file's sha256 either way). Escape hatch: "command" (the script and its arguments, run
 with this Python from the repository root) with "output" (where that script writes) skips all of this.
 --plan checks the config and prints each stage's folder and command, without running or writing anything. It is the only
@@ -454,12 +454,13 @@ class Run:
             clean = self.stages.get("clean") or {}
             if clean.get("mode", "adopt") != "run" or clean.get("command"):
                 raise Stop("config: stages.clean.only limits the clean job to some parts, so clean must run from a settings file (not adopted, not a command)")
-        clean = self.stages.get("clean")
-        if isinstance(clean, dict) and "workers" in clean:
-            if type(clean["workers"]) is not int or clean["workers"] < 1:
-                raise Stop(f"config: stages.clean.workers is {clean['workers']!r}, expected a whole number >= 1")
-            if clean.get("mode", "adopt") != "run" or clean.get("command"):
-                raise Stop("config: stages.clean.workers sets the clean job's workers, so clean must run from a settings file (not adopted, not a command)")
+        for name in ("clean", "overlap"):
+            entry = self.stages.get(name)
+            if isinstance(entry, dict) and "workers" in entry:
+                if type(entry["workers"]) is not int or entry["workers"] < 1:
+                    raise Stop(f"config: stages.{name}.workers is {entry['workers']!r}, expected a whole number >= 1")
+                if entry.get("mode", "adopt") != "run" or entry.get("command"):
+                    raise Stop(f"config: stages.{name}.workers sets the {name} job's workers, so {name} must run from a settings file (not adopted, not a command)")
         for stage in active:
             spec = self.stages.get(stage)
             if not isinstance(spec, dict):
