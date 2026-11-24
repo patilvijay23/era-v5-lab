@@ -188,7 +188,7 @@ def main():
     ap.add_argument("--clean-workers", type=int, required=True,
                     help="Parts the clean stage cleans at once (about 0.5 GB each). 16 on the 32 vCPU / 64 GiB job host.")
     ap.add_argument("--overlap-workers", type=int, required=True,
-                    help="MinHash signature processes (up to about 3 GB each at the largest parts). 12 on the 32 vCPU / 64 GiB job host.")
+                    help="MinHash signature processes (under 1 GB each on the sample, 1.5 GB while re-reading candidates). 16 on the 32 vCPU / 64 GiB job host, as the MinHash settings and the sizing gate.")
     ap.add_argument("--f2-workers", type=int, required=True,
                     help="F2 processes (the fingerprint set is shared). 30 on the 32 vCPU job host.")
     ap.add_argument("--run-id", required=True)

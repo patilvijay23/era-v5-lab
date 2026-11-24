@@ -27,8 +27,8 @@ verifies them); it is written into the generated config for the job to read, and
 
 "workers": N in stages.clean is how many parts the clean job cleans at once. It replaces "workers" of the settings file in the
 generated config; without it the settings file's value stands (the job's default is 1). stages.overlap takes it too, for the
-MinHash script (minhash_overlap.py: processes for its per-part signatures; its settings files say 0, which is every core of the
-machine, and each worker can hold up to about 3 GB). The exact overlap.py has no such key and refuses the config.
+MinHash script (minhash_overlap.py: processes for its per-part signatures; its settings files say 16, which the 1x sizing and
+the staged-data gate are based on; 0 would be every core of the machine). The exact overlap.py has no such key and refuses the config.
 
   build("overlap", spec, folders=..., cfg_dir=..., repo=...) -> {"command", "settings", "settings_sha256", "config", "config_sha256"}
 """
