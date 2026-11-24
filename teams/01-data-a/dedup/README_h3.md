@@ -285,6 +285,21 @@ The output is `teams/01-data-a/jobs/logs/2026-11-23-h3-e5d-controls.txt`, and `c
 counts, doc_ids) is in `teams/01-data-a/jobs/logs/2026-11-23-h3-e5d-controls/`. `controls.parquet` holds page text and
 stays in `out/`.
 
+### Reader viewer
+
+`view_e5d_sheets.py` is the page a bilingual reader labels their sheets in: Python 3's standard library only, served on
+127.0.0.1. It shows each item's `text_1` and `text_2` side by side (a sentence per line), with yes / no / unsure (keys
+y, n, u) and a note, and saves `<pair>-reader<k>-<name>.csv` (item, translation, note; no text) to `--labels-dir`.
+Unsaved answers are kept in the browser until saved. The page shows the item ID and the two texts only, and a save
+needs the page's token.
+
+```sh
+python3 teams/01-data-a/dedup/view_e5d_sheets.py --sheets ../sheets --name "Your Name"
+```
+
+Checked by hand on two FLORES+ test sheets (sa-en, sa-hi reader 1): answers by key, save, reload with an unsaved
+answer, and switching sheets.
+
 ## Harm check with planted cases (task 3.5)
 
 The harm check runs the pipeline on the week-1 diagnosis packs (9 prose packs of 500 documents; 1,308 gold documents)
@@ -426,6 +441,22 @@ They check which pairs are taken (the read non-translations, then pairs low on b
 or a `not_sanskrit` pair), `--positives`, the seed, a short pool reported, a summary with no text, that the sheet
 generator reads the file, and that mismatched score files, a pair missing from the known pairs, a pair listed as both a
 translation and not one, and an unknown ID are refused. The pairs, texts and scores are made up.
+
+The reader viewer:
+
+```sh
+python3 -B -m pytest teams/01-data-a/dedup/tests/test_view_e5d_sheets.py -q -rs -p no:cacheprovider
+```
+
+```text
+.................                                                        [100%]
+17 passed in 1.72s
+```
+
+They check which sheets it finds and how it names the answer files; that saving writes every item in the sheet's
+order, keeps newlines in notes and holds no text; that bad answers, bad sheets and an empty folder are refused; that
+answers typed into a sheet count until the first save; and, on a local server, that the page and sheets are served
+with text only, that a save needs the page's token, and that a non-local Host is refused.
 
 The harm check with planted cases:
 
