@@ -21,6 +21,7 @@ A zip file. When you unzip it you will see:
 
 ```
 e5d/
+├── README.md               this guide
 ├── view_e5d_sheets.py      the program that shows you the pairs
 └── sheets/
     ├── readers_guide.md     a short version of how to answer

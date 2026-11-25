@@ -277,26 +277,27 @@ half of one page. Per language pair (sa-en, sa-hi) the controls, all expected "n
   at sentence threshold 0.5 at most 0.5 with BGE-M3 (the 6 real translations: 0.857 and up) and below 0.3 with LaBSE
   (theirs: 0.3 and up).
 
-The 6 real translations and the 2 `not_sanskrit` pairs are left out (`--positives` adds the real translations as "yes"
-controls). The unread controls are listed in `controls.json` for a person to check before the sheets go out.
+The 2 `not_sanskrit` pairs are left out. `--positives` adds the 6 real translations as "yes" controls, so that each
+Sanskrit sheet has the known translations of E5d's layout. The unread controls are listed in `controls.json` for a
+person to check before the sheets go out.
 
-| Language pair | Read non-translations | Unread, low on both encoders (drawn / pool) | Controls |
-|---|---|---|---|
-| sa-en | 2 | 8 / 312 | 10 |
-| sa-hi | 1 | 9 / 65 | 10 |
+| Language pair | Read non-translations | Unread, low on both encoders (drawn / pool) | Read translations ("yes") | Controls |
+|---|---|---|---|---|
+| sa-en | 2 | 8 / 312 | 5 | 15 |
+| sa-hi | 1 | 9 / 65 | 1 | 11 |
 
-Command, from the repository root (Kunal Sinha's pairs and scores outside the repository); it took 0.66 s:
+Command, from the repository root (Kunal Sinha's pairs and scores outside the repository); it took 2.2 s:
 
 ```sh
 python3 -I teams/01-data-a/dedup/h3_e5d_controls.py --out out/e5d_controls --known-pairs ../known_pairs.parquet \
     --real ../real_translations.csv --labse ../pair_scores_labse_bge_m3/labse_15nov/pair_scores.csv \
     --bge ../pair_scores_labse_bge_m3/bge_m3_16nov/pair_scores.csv \
-    --not-translations fea1f4f3908e44b3 d0479a80829a2dc1 f4dd16e97e012036
+    --not-translations fea1f4f3908e44b3 d0479a80829a2dc1 f4dd16e97e012036 --positives
 ```
 
-The output is `teams/01-data-a/jobs/logs/2026-11-23-h3-e5d-controls.txt`, and `controls.json` (rule, inputs' sha256,
-counts, doc_ids) is in `teams/01-data-a/jobs/logs/2026-11-23-h3-e5d-controls/`. `controls.parquet` holds page text and
-stays in `out/`.
+The output is `teams/01-data-a/jobs/logs/2026-11-25-h3-e5d-controls.txt`, and `controls.json` (rule, inputs' sha256,
+counts, doc_ids) is in `teams/01-data-a/jobs/logs/2026-11-25-h3-e5d-controls/`. The run of 23 Nov without `--positives`
+(`2026-11-23-h3-e5d-controls`) drew the same 17 unread pairs. `controls.parquet` holds page text and stays in `out/`.
 
 ### Reader viewer
 
@@ -312,6 +313,57 @@ python3 teams/01-data-a/dedup/view_e5d_sheets.py --sheets ../sheets --name "Your
 
 Run in a browser with Claude Code on two FLORES+ test sheets (sa-en, sa-hi reader 1): answers by key, save, reload
 with an unsaved answer, and switching sheets.
+
+### Reader zips
+
+`h3_e5d_pack.py` makes one zip per reader from the generator's folder: the readers' guide (`README_e5d_readers.md`, as
+`README.md`), the viewer, and the reader's sheets with `readers_guide.md`. The key, `sentences.parquet` and
+`e5d_summary.json` never go in. `--assign` names each reader's sheets:
+
+```json
+{"keshavamurali": ["sa-en_reader1"], "riteshverma": ["sa-en_reader2", "sa-hi_reader1"]}
+```
+
+Before it writes anything, it checks that:
+
+- the run is complete, and each sheet and `readers_guide.md` has the sha256 the generator recorded;
+- each sheet opens in the viewer, unanswered;
+- a sheet goes to one reader only, and no reader gets both copies of a language pair.
+
+Each zip is then reopened and its sheets loaded with the viewer. Sheets with no reader yet are listed and not packed,
+so sheets can go out in stages. `manifest.json` records the hashes and each reader's sheets, with no text. The zips
+hold page text: they are sent privately and never committed. For the real sheets:
+
+```sh
+python3 -I teams/01-data-a/dedup/h3_e5d_pack.py --sheets-out out/e5d_e5c \
+    --assign teams/01-data-a/dedup/h3_e5d_readers.json --out out/e5d_zips
+```
+
+Speed and end-to-end check on the FLORES+ test sheets, with placeholder readers (`h3_e5d_flores_readers.json`):
+
+- Hardware: Apple M4, CPU; Python 3 with pyarrow (a reader needs only Python 3)
+- Wall time: 0.70 s from a cold start (`out/e5d_zips_flores` removed), 4 zips
+- A second run gave byte-identical zips
+- No Python loops over sheet rows: the loops run over the readers and their files, and a sheet's answer cells are
+  checked with pyarrow compute
+- Sync check: not applicable, no torch
+
+```sh
+python3 -I teams/01-data-a/dedup/h3_e5d_pack.py --sheets-out out/e5d_flores/sheets \
+    --assign teams/01-data-a/dedup/h3_e5d_flores_readers.json --out out/e5d_zips_flores
+```
+
+```text
+e5d_reader_a.zip: sa-en_reader1  sha256 7d601e84ead26f3e
+e5d_reader_b.zip: sa-en_reader2, sa-hi_reader1  sha256 4237d5c7dce65ac6
+e5d_reader_c.zip: sa-hi_reader2  sha256 595d6332d9782a4b
+e5d_reader_d.zip: hi-en_reader1  sha256 b32e12a27d7c4dca
+not packed (no reader yet): hi-en_reader2, or-en_reader1, or-en_reader2
+manifest: out/e5d_zips_flores/manifest.json
+```
+
+The log is `teams/01-data-a/jobs/logs/2026-11-25-h3-e5d-pack.txt`, with `manifest.json` in
+`teams/01-data-a/jobs/logs/2026-11-25-h3-e5d-pack/`.
 
 ## Harm check with planted cases (task 3.5)
 
@@ -473,6 +525,23 @@ They check which sheets it finds and how it names the answer files; that saving 
 order, keeps newlines in notes and holds no text; that bad answers, bad sheets and an empty folder are refused; that
 answers typed into a sheet count until the first save; and, on a local server, that the page and sheets are served
 with text only, that a save needs the page's token, and that a non-local Host is refused.
+
+The reader zips:
+
+```sh
+python3 -B -m pytest teams/01-data-a/dedup/tests/test_h3_e5d_pack.py -q -rs -p no:cacheprovider
+```
+
+```text
+..................                                                       [100%]
+18 passed in 1.16s
+```
+
+They check that each zip holds the guide, the viewer and the reader's sheets, byte for byte, and never the key or the
+summary; that unassigned sheets are listed and not packed; that the same inputs give the same zip; and that an unzipped
+sheet opens in the viewer unanswered. They also check that these are refused: a sheet given to two readers, both copies
+of a pair to one reader, an unknown or missing sheet, a bad reader name, an edited sheet, a sheet with an answer or a
+note filled in, an incomplete run and `--out` outside `out/`. Every text in them is made up.
 
 The harm check with planted cases:
 
